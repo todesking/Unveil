@@ -65,12 +65,14 @@ case class FrameUpdate(
   }
 
   def pop2(): FrameUpdate = {
+    // TODO[BUG]: pop2 can pop 2 single word
     requireDoubleWord(newFrame.stack(0))
     requireSecondWord(newFrame.stack(1))
     copy(newFrame = newFrame.copy(stack = newFrame.stack.drop(2)))
   }
 
   def pop2(in: DataLabel.In): FrameUpdate = {
+    // TODO[BUG]: pop2 can pop 2 single word
     requireDoubleWord(newFrame.stack(0))
     requireSecondWord(newFrame.stack(1))
     val x = newFrame.stack(0)
@@ -141,6 +143,15 @@ case class FrameUpdate(
   def store1(n: Int): FrameUpdate = {
     requireSingleWord(newFrame.stackTop)
     setLocal(n, newFrame.stackTop)
+      .pop1()
+  }
+
+  def store2(n: Int): FrameUpdate = {
+    requireDoubleWord(newFrame.stack(0))
+    requireSecondWord(newFrame.stack(1))
+    setLocal(n, newFrame.stackTop)
+      .setLocal(n + 1, makeSecondWord(newFrame.stackTop))
+      .pop2()
   }
 
   def ret(retval: DataLabel.In): FrameUpdate = {

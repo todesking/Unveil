@@ -117,7 +117,7 @@ object Transformer {
                       case ((cr, mr), df) =>
                         methodRenaming(cr -> mr) -> df.body.rewrite {
                           case bc: Bytecode.InvokeInstanceMethod if df.mustThis(bc.objectref) =>
-                            bc.rewriteMethodRef(self.thisRef, methodRenaming(bc.classRef, bc.methodRef))
+                            Bytecode.invokespecial(self.thisRef, methodRenaming(bc.classRef, bc.methodRef))
                           case bc: Bytecode.InstanceFieldAccess if df.mustThis(bc.objectref) =>
                             bc.rewriteFieldRef(self.thisRef, fieldRenaming(bc.classRef, bc.fieldRef))
                         }.makePrivate
@@ -194,53 +194,56 @@ object Transformer {
       import Bytecode._
       df.body.rewrite_* {
         case bc: InvokeInstanceMethod if df.mustThis(bc.objectref) =>
-          el.log(s"Inline ${bc.classRef}.${bc.methodRef}")
-          val mr = bc.methodRef
-          val cr =
-            bc match {
-              case invokespecial(cr, mr) =>
-                // TODO[BUG]: resolve special
-                cr
-              case invokevirtual(cr, mr) =>
-                df.self.instance.resolveVirtualMethod(mr)
-              case invokeinterface(cr, mr, _) =>
-                df.self.instance.resolveVirtualMethod(mr)
-            }
-          val calleeDf = df.self.instance.dataflow(cr, mr)
+          el.section(s"Inline invocation of ${bc.classRef}.${bc.methodRef}") { el =>
+            val mr = bc.methodRef
+            val cr =
+              bc match {
+                case invokespecial(cr, mr) =>
+                  // TODO[BUG]: resolve special
+                  cr
+                case invokevirtual(cr, mr) =>
+                  df.self.instance.resolveVirtualMethod(mr)
+                case invokeinterface(cr, mr, _) =>
+                  df.self.instance.resolveVirtualMethod(mr)
+              }
+            val calleeDf =
+              if (ignore.contains(cr -> mr)) df.self.instance.dataflow(cr, mr)
+              else inline(df.self.instance.dataflow(cr, mr), ignore + (cr -> mr), el).dataflow(df.self.instance)
 
-          // TODO[BUG]: if(calleeDf.localModified(0)) ...
-          val argOffset = if (calleeDf.body.isStatic) localOffset else localOffset + 1
-          // TODO: inline recursively
-          val cf =
-            calleeDf.body.rewrite_* {
-              case bc: LocalAccess =>
-                CodeFragment.bytecode(bc.rewriteLocalIndex(bc.localIndex + localOffset))
-              case bc: XReturn =>
-                val resultLocal = localOffset + calleeDf.maxLocals
-                CodeFragment(
-                  Seq(store(bc.returnType, resultLocal)) ++ (
-                    calleeDf.beforeFrames(bc.label).stack.tail.map { // TODO: Is IT really works???
+            // TODO[BUG]: if(calleeDf.localModified(0)) ...
+            val argOffset = if (calleeDf.body.isStatic) localOffset else localOffset + 1
+            // TODO: support exception
+            val cf =
+              calleeDf.body.rewrite_* {
+                case bc: LocalAccess =>
+                  CodeFragment.bytecode(bc.rewriteLocalIndex(bc.localIndex + localOffset))
+                case bc: XReturn =>
+                  val resultLocal = localOffset + calleeDf.maxLocals
+                  CodeFragment(
+                    Seq(store(bc.returnType, resultLocal)) ++ (
+                      calleeDf.beforeFrames(bc.label).stack.drop(bc.returnType.wordSize).map {
+                        case FrameItem(l, d, _) =>
+                          autoPop(d.typeRef)
+                      }
+                    ) ++ Seq(
+                        load(bc.returnType, resultLocal)
+                      )
+                  )
+                case bc: VoidReturn =>
+                  CodeFragment(
+                    calleeDf.beforeFrames(bc.label).stack.map {
                       case FrameItem(l, d, _) =>
                         autoPop(d.typeRef)
                     }
-                  ) ++ Seq(
-                      load(bc.returnType, resultLocal)
-                    )
+                  )
+              }.asCodeFragment
+                .prependBytecode(
+                  mr.descriptor.args.reverse.zipWithIndex.map { case (t, i) => store(t, i + argOffset) } ++
+                    (if (calleeDf.body.isStatic) Seq.empty else Seq(astore(localOffset)))
                 )
-              case bc: VoidReturn =>
-                CodeFragment(
-                  calleeDf.beforeFrames(bc.label).stack.tail.map {
-                    case FrameItem(l, d, _) =>
-                      autoPop(d.typeRef)
-                  }
-                )
-            }.asCodeFragment
-              .prependBytecode(
-                mr.descriptor.args.reverse.zipWithIndex.map { case (t, i) => store(t, i + argOffset) } ++
-                  (if (calleeDf.body.isStatic) Seq.empty else Seq(astore(localOffset)))
-              )
-          localOffset += calleeDf.maxLocals + 1 // TODO: inefficient if static method
-          cf
+            localOffset += calleeDf.maxLocals + 1 // TODO: inefficient if static method
+            cf
+          }
       }
     }
   }

@@ -34,6 +34,9 @@ object Bytecode {
   def load(t: TypeRef, n: Int): Bytecode =
     t match {
       case TypeRef.Int => iload(n)
+      case TypeRef.Double => dload(n)
+      case TypeRef.Float => fload(n)
+      case TypeRef.Long => lload(n)
       case TypeRef.Reference(_) => aload(n)
       case unk =>
         throw new IllegalArgumentException(s"Unsupported load instruction for ${unk}")
@@ -42,6 +45,7 @@ object Bytecode {
   def store(t: TypeRef, n: Int): Bytecode =
     t match {
       case TypeRef.Int => istore(n)
+      case TypeRef.Double => dstore(n)
       case TypeRef.Reference(cr) => astore(n)
       case unk =>
         throw new IllegalArgumentException(s"Unsupported store instruction for ${unk}")
@@ -155,6 +159,10 @@ object Bytecode {
     override def nextFrame(f: Frame) = update(f).store1(localIndex)
   }
 
+  sealed abstract class Store2 extends LocalAccess {
+    override def nextFrame(f: Frame) = update(f).store2(localIndex)
+  }
+
   sealed abstract class ConstX extends Procedure {
     def out: DataLabel.Out
     def data: Data
@@ -260,6 +268,10 @@ object Bytecode {
   case class astore(override val localIndex: Int) extends Store1 {
     override type Self = astore
     override def rewriteLocalIndex(m: Int) = if (localIndex == m) self else astore(m)
+  }
+  case class dstore(override val localIndex: Int) extends Store2 {
+    override type Self = dstore
+    override def rewriteLocalIndex(m: Int) = if (localIndex == m) self else dstore(m)
   }
 
   case class ireturn() extends XReturn {

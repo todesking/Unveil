@@ -57,6 +57,8 @@ object Javassist {
           out.addIstore(n)
         case astore(n) =>
           out.addAstore(n)
+        case dstore(n) =>
+          out.addDstore(n)
         case iconst(c) =>
           out.addIconst(c)
         case lconst(c) =>
@@ -307,6 +309,9 @@ object Javassist {
             onInstruction(index, aload(2))
           case 0x2D => // aload_3
             onInstruction(index, aload(3))
+
+          case 0x39 => // dstore
+            onInstruction(index, dstore(it.byteAt(index + 1)))
 
           case 0x3C => // istore_1
             onInstruction(index, istore(1))
