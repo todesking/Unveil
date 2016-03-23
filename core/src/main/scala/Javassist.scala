@@ -67,16 +67,28 @@ object Javassist {
           out.add(0x00, 0x03)
         case dup() =>
           out.add(0x59)
+        case ldc2_double(value) =>
+          out.addLdc2w(value)
         case pop() =>
           out.add(0x57)
         case pop2() =>
           out.add(0x58)
         case iadd() =>
           out.add(0x60)
+        case dadd() =>
+          out.add(0x63)
+        case dsub() =>
+          out.add(0x67)
         case imul() =>
           out.add(0x68)
         case isub() =>
           out.add(0x64)
+        case dmul() =>
+          out.add(0x6B)
+        case i2d() =>
+          out.add(0x87)
+        case d2i() =>
+          out.add(0x8E)
         case if_acmpne(target) =>
           out.add(0xA6)
           jumps(out.getSize) = (out.getSize - 1) -> target
@@ -171,6 +183,30 @@ object Javassist {
     classPool
   }
 
+  private[this] def getField(obj: AnyRef, fr: FieldRef): Any = {
+    val f = obj.getClass.getDeclaredFields.find(_.getName == fr.name).get
+    f.setAccessible(true)
+    f.get(obj)
+  }
+
+  private[this] object cpools {
+    private[this] val cl = getClass.getClassLoader
+    val getItemMethodRef = MethodRef.parse("getItem(I)Ljavassist/bytecode/ConstInfo;", cl)
+    val constPoolClassRef = ClassRef.of(classOf[ConstPool])
+    val doubleValue = FieldRef("value", FieldDescriptor(TypeRef.Double))
+  }
+  private[this] def getConstantFromCpool(cpool: ConstPool, index: Int): Any = {
+    val getItem = Reflect.allJMethods(cpool.getClass).apply(cpools.constPoolClassRef -> cpools.getItemMethodRef)
+    getItem.setAccessible(true)
+    val item = getItem.invoke(cpool, index.asInstanceOf[Object])
+    item.getClass.getSimpleName match {
+      case "DoubleInfo" =>
+        getField(item, cpools.doubleValue)
+      case unk =>
+        throw new NotImplementedError(s"Constant pool item $unk")
+    }
+  }
+
   private[this] def decompile0(jClass: Class[_], mRef: MethodRef, ctMethod: CtBehavior): Option[MethodBody] = {
     if (ctMethod.getMethodInfo2.getCodeAttribute == null) {
       None
@@ -216,6 +252,12 @@ object Javassist {
             onInstruction(index, iconst(it.signedByteAt(index + 1)))
           case 0x11 => // sipush
             onInstruction(index, iconst(it.s16bitAt(index + 1)))
+
+          case 0x14 => // ldc2_w
+            getConstantFromCpool(cpool, it.s16bitAt(index + 1)) match {
+              case d: Double =>
+                onInstruction(index, ldc2_double(d))
+            }
 
           case 0x16 => // lload
             onInstruction(index, lload(it.byteAt(index + 1)))
@@ -272,11 +314,24 @@ object Javassist {
           case 0x60 => // iadd
             onInstruction(index, iadd())
 
+          case 0x63 => // dadd
+            onInstruction(index, dadd())
           case 0x64 => // isub
             onInstruction(index, isub())
 
+          case 0x67 => // dsub
+            onInstruction(index, dsub())
           case 0x68 => // imul
             onInstruction(index, imul())
+
+          case 0x6B => // dmul
+            onInstruction(index, dmul())
+
+          case 0x87 => // i2d
+            onInstruction(index, i2d())
+
+          case 0x8E => // d2i
+            onInstruction(index, d2i())
 
           case 0xA2 => // if_icmpge
             onInstruction(index, if_icmpge(addr2jt(index + it.s16bitAt(index + 1))))

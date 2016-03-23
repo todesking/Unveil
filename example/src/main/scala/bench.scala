@@ -8,6 +8,7 @@ object Main {
       val baseline = Bench.baseline(i)
       val standard = Bench.standardF(i)
       val fast = Bench.fastF(i)
+      println((i, baseline, standard, fast))
       assert(baseline == standard)
       assert(baseline == fast)
     }
@@ -26,11 +27,7 @@ object Bench {
 
   val baseline = {
     def F(x: Int) = f8(f7(f6(f5(f4(f3(f2(f1(x))))))))
-    x: Int => F(F(F(F(F(F(
-      F(F(F(F(F(
-        F(F(F(F(x))))
-      )))))
-    ))))))
+    x: Int => F(F(F(F(x))))
   }
 
   val standardF = {

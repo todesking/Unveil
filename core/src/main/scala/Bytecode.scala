@@ -286,6 +286,9 @@ object Bytecode {
   case class aconst_null() extends Const1 {
     override def data = Data.Null
   }
+  case class ldc2_double(value: Double) extends Const2 {
+    override def data = Data.Primitive(TypeRef.Double, value)
+  }
   case class goto(override val jumpTarget: JumpTarget) extends Jump
   case class if_icmple(override val jumpTarget: JumpTarget) extends if_X1cmpXX
   case class if_icmpge(override val jumpTarget: JumpTarget) extends if_X1cmpXX
@@ -300,23 +303,23 @@ object Bytecode {
   sealed abstract class PrimitiveBinOp[A <: AnyVal] extends Procedure {
     val value1 = DataLabel.in("value1")
     val value2 = DataLabel.in("value2")
-    val out = DataLabel.out("result")
+    val result = DataLabel.out("result")
 
     def operandType: TypeRef.Primitive
     def op(value1: A, value2: A): A
 
     override def inputs = Seq(value1, value2)
-    override def output = Some(out)
+    override def output = Some(result)
     override def effect = None
     override def nextFrame(f: Frame) =
-      (f.stack(0), f.stack(1)) match {
+      (f.stack(0), f.stack(operandType.wordSize)) match {
         case (d1, d2) if d1.data.typeRef == operandType && d2.data.typeRef == operandType =>
           update(f)
-            .pop1(value2)
-            .pop1(value1)
+            .pop(operandType, value2)
+            .pop(operandType, value1)
             .push(
               FrameItem(
-                out,
+                result,
                 d1.data.value.flatMap { v1 =>
                   d2.data.value.map { v2 =>
                     Data.Primitive(
@@ -328,20 +331,68 @@ object Bytecode {
                 Some(label)
               )
             )
-        case (d1, d2) => throw new AnalyzeException(s"Type error: ${(d1, d2)}")
+        case (d1, d2) => throw new AnalyzeException(s"$this: Type error: ${(d1, d2)}")
       }
+  }
+  sealed abstract class PrimitiveUniOp[A <: AnyVal, B <: AnyVal] extends Procedure {
+    val value = DataLabel.in("value")
+    val result = DataLabel.out("result")
+
+    override def inputs = Seq(value)
+    override def output = Some(result)
+    override def effect = None
+
+    def operandType: TypeRef.Primitive
+    def resultType: TypeRef.Primitive
+    def op(value: A): B
+
+    override def nextFrame(f: Frame) = {
+      update(f)
+        .pop(operandType)
+        .push(
+          FrameItem(
+            result,
+            f.stackTop.data.value.map { v =>
+              Data.Primitive(resultType, op(v.asInstanceOf[A]))
+            }.getOrElse { Data.Unsure(resultType) },
+            Some(label)
+          )
+        )
+    }
   }
   case class iadd() extends PrimitiveBinOp[Int] {
     override def operandType = TypeRef.Int
     override def op(value1: Int, value2: Int) = value1 + value2
   }
+  case class dadd() extends PrimitiveBinOp[Double] {
+    override def operandType = TypeRef.Double
+    override def op(value1: Double, value2: Double) = value1 + value2
+  }
   case class isub() extends PrimitiveBinOp[Int] {
     override def operandType = TypeRef.Int
     override def op(value1: Int, value2: Int) = value1 - value2
   }
+  case class dsub() extends PrimitiveBinOp[Double] {
+    override def operandType = TypeRef.Double
+    override def op(value1: Double, value2: Double) = value1 - value2
+  }
+  case class dmul() extends PrimitiveBinOp[Double] {
+    override def operandType = TypeRef.Double
+    override def op(value1: Double, value2: Double) = value1 * value2
+  }
   case class imul() extends PrimitiveBinOp[Int] {
     override def operandType = TypeRef.Int
     override def op(value1: Int, value2: Int) = value1 * value2
+  }
+  case class d2i() extends PrimitiveUniOp[Double, Int] {
+    override def operandType = TypeRef.Double
+    override def resultType = TypeRef.Int
+    override def op(value: Double) = value.toInt
+  }
+  case class i2d() extends PrimitiveUniOp[Int, Double] {
+    override def operandType = TypeRef.Int
+    override def resultType = TypeRef.Double
+    override def op(value: Int) = value.toDouble
   }
   case class invokevirtual(override val classRef: ClassRef, override val methodRef: MethodRef) extends InvokeInstanceMethod {
     override type Self = invokevirtual

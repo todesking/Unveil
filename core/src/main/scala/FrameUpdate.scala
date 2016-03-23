@@ -65,15 +65,15 @@ case class FrameUpdate(
   }
 
   def pop2(): FrameUpdate = {
-    requireSecondWord(newFrame.stack(0))
-    requireDoubleWord(newFrame.stack(1))
+    requireDoubleWord(newFrame.stack(0))
+    requireSecondWord(newFrame.stack(1))
     copy(newFrame = newFrame.copy(stack = newFrame.stack.drop(2)))
   }
 
   def pop2(in: DataLabel.In): FrameUpdate = {
-    requireSecondWord(newFrame.stack(0))
-    requireDoubleWord(newFrame.stack(1))
-    val x = newFrame.stack(1)
+    requireDoubleWord(newFrame.stack(0))
+    requireSecondWord(newFrame.stack(1))
+    val x = newFrame.stack(0)
     pop0(in, x, newFrame.stack.drop(2))
   }
 
@@ -97,7 +97,7 @@ case class FrameUpdate(
 
   def push2(d: FrameItem): FrameUpdate = {
     requireDoubleWord(d)
-    push0(d, makeSecondWord(d) :: d :: newFrame.stack)
+    push0(d, d :: makeSecondWord(d) :: newFrame.stack)
   }
 
   private[this] def push0(d: FrameItem, stack: List[FrameItem]): FrameUpdate =

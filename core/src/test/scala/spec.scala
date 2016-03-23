@@ -387,6 +387,10 @@ class Spec extends FunSpec with Matchers {
       }
     }
 
+    it("double values") {
+      pending
+    }
+
     // TODO: Exception handler rejection test
     // TODO: accessor inlining
     // TODO: accept new instance as constant in SetterConstructor
