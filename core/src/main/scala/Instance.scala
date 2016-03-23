@@ -53,7 +53,7 @@ sealed abstract class Instance[A <: AnyRef] {
       ms = ext
       ext = ms ++
         ms.filter { case (cr, _) => cr < ClassRef.Object }
-          .flatMap { case (cr, mr) => dataflow(cr, mr).usedMethodsOf(this) }
+        .flatMap { case (cr, mr) => dataflow(cr, mr).usedMethodsOf(this) }
     } while (ext.size > ms.size)
     ext
   }
@@ -62,7 +62,7 @@ sealed abstract class Instance[A <: AnyRef] {
 
   // TODO: interface field???
   def resolveField(cr: ClassRef, fr: FieldRef): ClassRef =
-    if(fields.contains(cr -> fr)) cr
+    if (fields.contains(cr -> fr)) cr
     else Reflect.superClassOf(cr).map { sc => resolveField(sc, fr) } getOrElse {
       throw new IllegalArgumentException(s"Field resolution failed: $cr.$fr")
     }
@@ -172,28 +172,28 @@ object Instance {
 constructor:
 ${constructorBody.descriptor}
 ${
-      constructorBody.pretty
-    }
+        constructorBody.pretty
+      }
 new/overriden methods:
 ${
-      thisMethods.map {
-        case (mr, body) =>
-          s"""def ${mr} ${body.attribute}
+        thisMethods.map {
+          case (mr, body) =>
+            s"""def ${mr} ${body.attribute}
 ${body.pretty}"""
-      }.mkString("\n")
-    }
+        }.mkString("\n")
+      }
 New fields:
 ${
-      thisFields.map {
-        case (fr, attr) => s"$fr $attr"
-      }.mkString("\n")
-    }
+        thisFields.map {
+          case (fr, attr) => s"$fr $attr"
+        }.mkString("\n")
+      }
 Super fields:
 ${
-      fields.filterNot(_._1._1 == thisRef).map {
-        case ((cr, fr), attr) => s"$cr.$fr ${attr}"
-      }.mkString("\n")
-    }
+        fields.filterNot(_._1._1 == thisRef).map {
+          case ((cr, fr), attr) => s"$cr.$fr ${attr}"
+        }.mkString("\n")
+      }
 """
     }
 
@@ -240,9 +240,10 @@ ${
       copy(
         thisRef = newRef,
         thisMethods = thisMethods.map { case (ref, body) => ref -> body.rewriteClassRef(thisRef, newRef) },
-        fieldValues = fieldValues.map { case (k @ (cr, fr), v) =>
-          if(cr == thisRef) ((newRef -> fr) -> v)
-          else k -> v
+        fieldValues = fieldValues.map {
+          case (k @ (cr, fr), v) =>
+            if (cr == thisRef) ((newRef -> fr) -> v)
+            else k -> v
         }
       )
 
@@ -445,11 +446,12 @@ ${
           .filterNot { case k @ (cr, mr) => o.methods(k).isNative }
           .map { case k @ (cr, mr) => k -> o.dataflow(cr, mr) }
           .toMap
-      el.logCMethods("required methods",requiredMethods.keys)
+      el.logCMethods("required methods", requiredMethods.keys)
 
       val methodRenaming =
-        requiredMethods.collect { case (k @ (cr, mr), df) if !overridableVirtualMethods.contains(k) =>
-          (k -> mr.anotherUniqueName())
+        requiredMethods.collect {
+          case (k @ (cr, mr), df) if !overridableVirtualMethods.contains(k) =>
+            (k -> mr.anotherUniqueName())
         }
       el.logCMethods("renamed methods", methodRenaming.keys)
 
@@ -459,10 +461,11 @@ ${
           .toSet
       el.logCFields("required fields", requiredFields)
 
-      requiredFields foreach { case k @ (cr, fr) =>
-        val f = o.fields(k)
-        if(cr >= superRef && f.attribute.isPrivate && !f.attribute.isFinal)
-          throw new TransformException(s"Required field is non-final private: $cr.$fr")
+      requiredFields foreach {
+        case k @ (cr, fr) =>
+          val f = o.fields(k)
+          if (cr >= superRef && f.attribute.isPrivate && !f.attribute.isFinal)
+            throw new TransformException(s"Required field is non-final private: $cr.$fr")
       }
 
       val fieldRenaming =
@@ -473,48 +476,51 @@ ${
       el.logCFields("renamed fields", fieldRenaming.keys)
 
       val thisMethods =
-        requiredMethods.map { case (k @ (cr, mr), df) =>
-          val newMr = methodRenaming.get(k).getOrElse(mr)
-          import Bytecode._
-          newMr -> df.body.rewrite {
-            case bc @ invokevirtual(cr, mr) if df.mustThis(bc.objectref) =>
-              val vcr = o.resolveVirtualMethod(mr)
-              methodRenaming.get(vcr -> mr).fold {
-                bc.rewriteClassRef(thisRef)
-              } { newMr =>
-                bc.rewriteMethodRef(thisRef, newMr)
-              }
-            case bc @ invokeinterface(cr, mr, _) if df.mustThis(bc.objectref) =>
-              val vcr = o.resolveVirtualMethod(mr)
-              methodRenaming.get(vcr -> mr).fold {
-                bc.rewriteClassRef(thisRef)
-              } { newMr =>
-                bc.rewriteMethodRef(thisRef, newMr)
-              }
-            case bc @ invokespecial(cr, mr) if df.mustThis(bc.objectref) =>
-              // TODO: resolve special
-              methodRenaming.get(cr -> mr).fold {
-                bc
-              } { newMr =>
-                bc.rewriteMethodRef(thisRef, newMr)
-              }
-            case bc: InstanceFieldAccess if df.mustThis(bc.objectref) =>
-              fieldRenaming.get(o.resolveField(bc.classRef, bc.fieldRef) -> bc.fieldRef).fold(bc) { newFr =>
-                bc.rewriteFieldRef(thisRef, newFr)
-              }
-          }
+        requiredMethods.map {
+          case (k @ (cr, mr), df) =>
+            val newMr = methodRenaming.get(k).getOrElse(mr)
+            import Bytecode._
+            newMr -> df.body.rewrite {
+              case bc @ invokevirtual(cr, mr) if df.mustThis(bc.objectref) =>
+                val vcr = o.resolveVirtualMethod(mr)
+                methodRenaming.get(vcr -> mr).fold {
+                  bc.rewriteClassRef(thisRef)
+                } { newMr =>
+                  bc.rewriteMethodRef(thisRef, newMr)
+                }
+              case bc @ invokeinterface(cr, mr, _) if df.mustThis(bc.objectref) =>
+                val vcr = o.resolveVirtualMethod(mr)
+                methodRenaming.get(vcr -> mr).fold {
+                  bc.rewriteClassRef(thisRef)
+                } { newMr =>
+                  bc.rewriteMethodRef(thisRef, newMr)
+                }
+              case bc @ invokespecial(cr, mr) if df.mustThis(bc.objectref) =>
+                // TODO: resolve special
+                methodRenaming.get(cr -> mr).fold {
+                  bc
+                } { newMr =>
+                  bc.rewriteMethodRef(thisRef, newMr)
+                }
+              case bc: InstanceFieldAccess if df.mustThis(bc.objectref) =>
+                fieldRenaming.get(o.resolveField(bc.classRef, bc.fieldRef) -> bc.fieldRef).fold(bc) { newFr =>
+                  bc.rewriteFieldRef(thisRef, newFr)
+                }
+            }
         }
       el.logMethods("thisMethods", thisMethods.keys)
 
       val thisFields =
-        fieldRenaming.map { case (k @ (cr, fr), newFr) =>
-          newFr -> o.fields(k).attribute
+        fieldRenaming.map {
+          case (k @ (cr, fr), newFr) =>
+            newFr -> o.fields(k).attribute
         }
       el.logFields("thisFields", thisFields.keys)
 
       val fieldValues =
-        fieldRenaming.map { case (k @ (cr, fr), newFr) =>
-          (thisRef.upcast[ClassRef] -> newFr) -> o.fields(k).data
+        fieldRenaming.map {
+          case (k @ (cr, fr), newFr) =>
+            (thisRef.upcast[ClassRef] -> newFr) -> o.fields(k).data
         }
       el.logCFields("valued fields", fieldValues.keys)
 

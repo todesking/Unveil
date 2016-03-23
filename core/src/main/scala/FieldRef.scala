@@ -5,7 +5,7 @@ case class FieldRef(name: String, descriptor: FieldDescriptor) {
   def typeRef: TypeRef = descriptor.typeRef
   def renamed(newName: String): FieldRef = copy(name = newName)
   def anotherUniqueName(baseNames: String*): FieldRef =
-    if(baseNames.isEmpty) anotherUniqueName(name)
+    if (baseNames.isEmpty) anotherUniqueName(name)
     else copy(name = FieldRef.uniqueName(baseNames: _*))
 }
 object FieldRef {
