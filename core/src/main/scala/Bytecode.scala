@@ -42,6 +42,7 @@ object Bytecode {
   def store(t: TypeRef, n: Int): Bytecode =
     t match {
       case TypeRef.Int => istore(n)
+      case TypeRef.Reference(cr) => astore(n)
       case unk =>
         throw new IllegalArgumentException(s"Unsupported store instruction for ${unk}")
     }

@@ -506,7 +506,7 @@ ${
                 fieldRenaming.get(o.resolveField(bc.classRef, bc.fieldRef) -> bc.fieldRef).fold(bc) { newFr =>
                   bc.rewriteFieldRef(thisRef, newFr)
                 }
-            }
+            }.makeNonFinal
         }
       el.logMethods("thisMethods", thisMethods.keys)
 

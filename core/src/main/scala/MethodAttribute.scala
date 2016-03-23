@@ -13,6 +13,8 @@ sealed abstract class MethodAttribute extends Flags[MethodAttribute] {
     this.has(MethodAttribute.Abstract)
   def isNative: Boolean =
     this.has(MethodAttribute.Native)
+  def makePrivate: MethodAttribute
+  def makeNonFinal: MethodAttribute
 }
 object MethodAttribute extends FlagsCompanion[MethodAttribute] {
   def from(m: JMethod): MethodAttribute =
@@ -26,9 +28,15 @@ object MethodAttribute extends FlagsCompanion[MethodAttribute] {
   override def multi(items: Set[SingleFlag]): MethodAttribute =
     Multi(items)
 
-  case class Multi(override val items: Set[SingleFlag]) extends MethodAttribute with MultiFlags
+  case class Multi(override val items: Set[SingleFlag]) extends MethodAttribute with MultiFlags {
+    override def makePrivate = Multi(items.filterNot(_ == Public).filterNot(_ == Protected)) | Private
+    override def makeNonFinal = Multi(items.filterNot(_ == Final))
+  }
 
-  sealed abstract class Single(override val toInt: Int) extends MethodAttribute with SingleFlag
+  sealed abstract class Single(override val toInt: Int) extends MethodAttribute with SingleFlag {
+    override def makePrivate = Multi(Set(this)).makePrivate
+    override def makeNonFinal = Multi(Set(this)).makeNonFinal
+  }
 
   case object Public extends Single(Modifier.PUBLIC)
   case object Private extends Single(Modifier.PRIVATE)

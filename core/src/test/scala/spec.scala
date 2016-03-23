@@ -369,6 +369,9 @@ class Spec extends FunSpec with Matchers {
           ri.dataflow(foo).usedMethodsOf(ri) should be('empty)
         }
       }
+      it("Function1") {
+        pending
+      }
     }
 
     it("double values") {

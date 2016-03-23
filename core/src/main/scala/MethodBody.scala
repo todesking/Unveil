@@ -23,6 +23,12 @@ case class MethodBody(
 
   def isStatic: Boolean = attribute.isStatic
 
+  def makePrivate: MethodBody =
+    copy(attribute = attribute.makePrivate)
+
+  def makeNonFinal: MethodBody =
+    copy(attribute = attribute.makeNonFinal)
+
   // TODO: Exception handler
 
   def methodReferences: Set[(ClassRef, MethodRef)] =

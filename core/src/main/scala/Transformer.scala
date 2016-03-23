@@ -120,7 +120,7 @@ object Transformer {
                             bc.rewriteMethodRef(self.thisRef, methodRenaming(bc.classRef, bc.methodRef))
                           case bc: Bytecode.InstanceFieldAccess if df.mustThis(bc.objectref) =>
                             bc.rewriteFieldRef(self.thisRef, fieldRenaming(bc.classRef, bc.fieldRef))
-                        }
+                        }.makePrivate
                     }
                 val rewrittenMethods =
                   methods
@@ -180,20 +180,21 @@ object Transformer {
         .filterNot { mr => orig.resolveVirtualMethod(mr) == ClassRef.Object }
         .foldLeft(orig.duplicate1(el)) {
           case (self, mr) =>
-            val cr = orig.resolveVirtualMethod(mr)
+            val cr = self.resolveVirtualMethod(mr)
             el.log(s"Inlining $mr")
             val inlined =
-              el.enterMethod(cr, mr) { el => inline(orig.dataflow(cr, mr), Set(cr -> mr)) }
+              el.enterMethod(cr, mr) { el => inline(self.dataflow(cr, mr), Set(cr -> mr), el) }
             self.addMethod(mr, inlined)
         }
     }
 
-    private[this] def inline(df: DataFlow, ignore: Set[(ClassRef, MethodRef)]): MethodBody = {
+    private[this] def inline(df: DataFlow, ignore: Set[(ClassRef, MethodRef)], el: EventLogger): MethodBody = {
       // TODO: if(df.localModified(0)) df.body
       var localOffset = df.maxLocals
       import Bytecode._
       df.body.rewrite_* {
         case bc: InvokeInstanceMethod if df.mustThis(bc.objectref) =>
+          el.log(s"Inline ${bc.classRef}.${bc.methodRef}")
           val mr = bc.methodRef
           val cr =
             bc match {
@@ -207,8 +208,9 @@ object Transformer {
             }
           val calleeDf = df.self.instance.dataflow(cr, mr)
 
-          // TODO: if(calleeDf.localModified(0)) ...
+          // TODO[BUG]: if(calleeDf.localModified(0)) ...
           val argOffset = if (calleeDf.body.isStatic) localOffset else localOffset + 1
+          // TODO: inline recursively
           val cf =
             calleeDf.body.rewrite_* {
               case bc: LocalAccess =>
@@ -217,7 +219,7 @@ object Transformer {
                 val resultLocal = localOffset + calleeDf.maxLocals
                 CodeFragment(
                   Seq(store(bc.returnType, resultLocal)) ++ (
-                    calleeDf.beforeFrames(bc.label).stack.tail.map {
+                    calleeDf.beforeFrames(bc.label).stack.tail.map { // TODO: Is IT really works???
                       case FrameItem(l, d, _) =>
                         autoPop(d.typeRef)
                     }
@@ -235,7 +237,7 @@ object Transformer {
             }.asCodeFragment
               .prependBytecode(
                 mr.descriptor.args.reverse.zipWithIndex.map { case (t, i) => store(t, i + argOffset) } ++
-                  (if (calleeDf.body.isStatic) Seq.empty else Seq(pop()))
+                  (if (calleeDf.body.isStatic) Seq.empty else Seq(astore(localOffset)))
               )
           localOffset += calleeDf.maxLocals + 1 // TODO: inefficient if static method
           cf
