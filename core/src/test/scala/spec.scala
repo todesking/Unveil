@@ -215,19 +215,6 @@ class Spec extends FunSpec with Matchers {
       val ri = i.duplicate[Base](el).duplicate[Base](el).materialized
       ri.value.foo should be(1000)
     }
-    it("lower private fields") {
-      class Base {
-        private[this] val x = 1000
-        def foo: Int = x
-      }
-      val x = new Base
-      val i = Instance.of(x)
-      val ri = Transformer.lowerPrivateFields.apply(i, el).get
-      withThe(ri) {
-        ri.thisMethods.keySet should contain(MethodRef.parse("foo()I", defaultCL))
-        ri.thisFields.size should be(1)
-      }
-    }
     it("dup and accessor") {
       abstract class Base { def foo: Int }
       class A extends Base { override val foo = 1 }
@@ -310,10 +297,7 @@ class Spec extends FunSpec with Matchers {
         val a = new A(b)
         a.foo() should be(expected)
 
-        val i = Transformer.lowerPrivateFields(Instance.of(a), el).get
-        withThe(i) {
-          i.dataflow(foo).usedFieldsOf(i).size should be(1)
-        }
+        val i = Instance.of(a)
 
         val fused = Transformer.fieldFusion(i, el).get
         withThe(fused) {
@@ -324,9 +308,9 @@ class Spec extends FunSpec with Matchers {
       }
 
       it("Function1") {
-        val f1 = {n: Int => n + 1}
-        val f2 = {n: Int => n * 2}
-        val f3 = {n: Int => n + 1}
+        val f1 = { n: Int => n + 1 }
+        val f2 = { n: Int => n * 2 }
+        val f3 = { n: Int => n + 1 }
         val f = f1 andThen f2 andThen f3
         val i = Instance.of(f)
         val n = 1

@@ -34,67 +34,9 @@ trait Transformer { self =>
     this andThen next
 }
 object Transformer {
+  // TODO: remove this
   def newEventLogger(): EventLogger =
     new EventLogger
-
-  // TODO: lowerMembers
-  // TODO: this transformer is unnecessary now
-  object lowerPrivateFields extends Transformer {
-    override def name = "lowerPrivateFields"
-    override def apply0[A <: AnyRef](orig: Instance[A], el: EventLogger): Instance.Duplicate[A] = {
-      val dupInstance = orig.duplicate1(el)
-      // TODO: support invokespecial methods
-      val entryMethods =
-        dupInstance.virtualMethods
-          .filter {
-            case (mr, a) =>
-              dupInstance.resolveVirtualMethod(mr) != ClassRef.Object && !a.isFinal
-          }.map {
-            case (mr, a) =>
-              mr -> dupInstance.dataflow(mr)
-          }.filter {
-            case (mr, df) =>
-              // invokespecial need special handling
-              df.body.bytecode.forall {
-                case bc @ Bytecode.invokespecial(_, _) if df.mustInstance(bc.objectref, dupInstance) => false
-                case _ => true
-              }
-          }.filter {
-            case (mr, df) =>
-              df.usedFieldsOf(dupInstance).forall {
-                case (cr, mr) =>
-                  val attr = dupInstance.fields(cr -> mr).attribute
-                  cr != dupInstance.thisRef && attr.isPrivate
-              }
-          }
-      el.logMethods("lowered methods", entryMethods.keys)
-      val copyFields: Map[(ClassRef, FieldRef), (FieldRef, Field)] =
-        entryMethods.flatMap {
-          case (mr, df) =>
-            df.usedFieldsOf(dupInstance).filter {
-              case (cr, fr) => cr != dupInstance.thisRef && dupInstance.fields(cr -> fr).attribute.isPrivateFinal
-            }
-        }.map {
-          case (cr, fr) =>
-            val f = dupInstance.fields(cr -> fr)
-            (cr -> fr) -> (fr.anotherUniqueName(fr.name) -> f)
-        }
-      el.logCFields("lowered fields", copyFields.keys)
-      val overridenMethods =
-        entryMethods.map {
-          case (mr, df) =>
-            import Bytecode._
-            mr -> df.body.rewrite {
-              case bc: InstanceFieldAccess if df.mustInstance(bc.objectref, dupInstance) && copyFields.contains(bc.classRef -> bc.fieldRef) =>
-                val (fr, _) = copyFields(bc.classRef -> bc.fieldRef)
-                bc.rewriteClassRef(dupInstance.thisRef).rewriteFieldRef(fr)
-            }
-        }
-      dupInstance
-        .addFields(copyFields.map { case (_, (newFr, f)) => newFr -> f })
-        .addMethods(overridenMethods)
-    }
-  }
 
   // TODO: support instance-stateful fields(need leakage detection)
   // TODO: support mutable fields(if fref eq original then optimized else original)
