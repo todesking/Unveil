@@ -14,6 +14,7 @@ trait Transformer { self =>
       el.enterTransformer(this, orig) { el => Success(apply0(orig, el)) }
     } catch {
       case e: UnveilException =>
+        el.fail(e)
         Failure(e)
     }
   protected[this] def apply0[A <: AnyRef](orig: Instance[A], el: EventLogger): Instance.Duplicate[A]
@@ -28,16 +29,20 @@ trait Transformer { self =>
       }
       override def apply0[A <: AnyRef](orig: Instance[A], el: EventLogger) = throw new AssertionError()
     }
+
+  def >>>(next: Transformer): Transformer =
+    this andThen next
 }
 object Transformer {
   def newEventLogger(): EventLogger =
     new EventLogger
 
   // TODO: lowerMembers
+  // TODO: this transformer is unnecessary now
   object lowerPrivateFields extends Transformer {
     override def name = "lowerPrivateFields"
     override def apply0[A <: AnyRef](orig: Instance[A], el: EventLogger): Instance.Duplicate[A] = {
-      val dupInstance = orig.duplicate1
+      val dupInstance = orig.duplicate1(el)
       // TODO: support invokespecial methods
       val entryMethods =
         dupInstance.virtualMethods
@@ -96,7 +101,7 @@ object Transformer {
   object fieldFusion extends Transformer {
     override def name = s"fieldFusion"
     override def apply0[A <: AnyRef](instance: Instance[A], el: EventLogger): Instance.Duplicate[A] = {
-      val dupInstance = instance.duplicate1
+      val dupInstance = instance.duplicate1(el)
       fuse(
         "",
         dupInstance,
@@ -148,6 +153,8 @@ object Transformer {
                       self.dataflow(cr, mr).usedMethodsOf(fieldInstance)
                   }
                 )
+                el.logCMethods("used methods in the field", usedMethods)
+
                 val methodRenaming =
                   usedMethods.map {
                     case k @ (cr, mr) =>
@@ -193,14 +200,16 @@ object Transformer {
                         } else {
                           // TODO: use df.mustFieldRef instead of df.mustInstance when rewriting
                           mr -> df.body.rewrite {
-                            case bc @ getfield(cr1, fr1) if df.mustThis(bc.objectref) && cr1 == cr && fr1 == fr =>
+                            case bc @ getfield(cr1, fr1) if df.mustThis(bc.objectref) && self.resolveField(cr1, fr1) == cr && fr1 == fr =>
                               nop()
                             case bc: InvokeInstanceMethod if df.mustInstance(bc.objectref, fieldInstance) =>
-                              methodRenaming.get(bc.classRef, bc.methodRef).fold(bc) { mr =>
-                                bc.rewriteMethodRef(self.thisRef, mr)
+                              methodRenaming.get(fieldInstance.resolveVirtualMethod(bc.methodRef) -> bc.methodRef).fold {
+                                throw new AssertionError(s"Can't find renamed method for ${bc.classRef}.${bc.methodRef}")
+                              } { mr =>
+                                invokespecial(self.thisRef, mr)
                               }
                             case bc: InstanceFieldAccess if df.mustInstance(bc.objectref, fieldInstance) =>
-                              fieldRenaming.get(bc.classRef, bc.fieldRef).fold(bc) {
+                              fieldRenaming.get(fieldInstance.resolveField(bc.classRef, bc.fieldRef) -> bc.fieldRef).fold(bc) {
                                 case fr =>
                                   bc.rewriteFieldRef(self.thisRef, fr)
                               }
@@ -227,7 +236,7 @@ object Transformer {
         .rewritableVirtualMethods
         .keys
         .filterNot { mr => orig.resolveVirtualMethod(mr) == ClassRef.Object }
-        .foldLeft(orig.duplicate1) {
+        .foldLeft(orig.duplicate1(el)) {
           case (self, mr) =>
             val cr = orig.resolveVirtualMethod(mr)
             el.log(s"Inlining $mr")
@@ -250,6 +259,8 @@ object Transformer {
                 // TODO[BUG]: resolve special
                 cr
               case invokevirtual(cr, mr) =>
+                df.self.instance.resolveVirtualMethod(mr)
+              case invokeinterface(cr, mr, _) =>
                 df.self.instance.resolveVirtualMethod(mr)
             }
           val calleeDf = df.self.instance.dataflow(cr, mr)
@@ -291,4 +302,5 @@ object Transformer {
   }
 
   // TODO: eliminate load-pop pair etc
+  // TODO: check access rights and resolve members
 }

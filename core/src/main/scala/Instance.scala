@@ -44,23 +44,34 @@ sealed abstract class Instance[A <: AnyRef] {
   def hasVirtualMethod(ref: String): Boolean =
     hasVirtualMethod(MethodRef.parse(ref, thisRef.classLoader))
 
+  // TODO: rename this method
   def extendMethods(seed: Set[(ClassRef, MethodRef)]): Set[(ClassRef, MethodRef)] = {
+    // TODO: this is very inefficient
     var ms: Set[(ClassRef, MethodRef)] = null
     var ext: Set[(ClassRef, MethodRef)] = seed
     do {
       ms = ext
-      ext = ms ++ ms.flatMap { case (cr, mr) => dataflow(cr, mr).usedMethodsOf(this) }
+      ext = ms ++
+        ms.filter { case (cr, _) => cr < ClassRef.Object }
+          .flatMap { case (cr, mr) => dataflow(cr, mr).usedMethodsOf(this) }
     } while (ext.size > ms.size)
     ext
   }
 
   def resolveVirtualMethod(mr: MethodRef): ClassRef
 
+  // TODO: interface field???
+  def resolveField(cr: ClassRef, fr: FieldRef): ClassRef =
+    if(fields.contains(cr -> fr)) cr
+    else Reflect.superClassOf(cr).map { sc => resolveField(sc, fr) } getOrElse {
+      throw new IllegalArgumentException(s"Field resolution failed: $cr.$fr")
+    }
+
   def materialized: Instance.Original[A]
 
-  def duplicate[B >: A <: AnyRef: ClassTag]: Instance.Duplicate[B]
+  def duplicate[B >: A <: AnyRef: ClassTag](el: EventLogger): Instance.Duplicate[B]
 
-  def duplicate1: Instance.Duplicate[A]
+  def duplicate1(el: EventLogger): Instance.Duplicate[A]
 
   def usedMethodsOf(i: Instance[_ <: AnyRef]): Set[(ClassRef, MethodRef)] =
     analyzeMethods(Set.empty[(ClassRef, MethodRef)]) { (agg, cr, mr, df) => agg ++ df.usedMethodsOf(i) }
@@ -101,19 +112,13 @@ object Instance {
     override def resolveVirtualMethod(mr: MethodRef): ClassRef =
       Reflect.resolveVirtualMethod(jClass, mr)
 
-    override def duplicate[B >: A <: AnyRef: ClassTag]: Duplicate[B] =
-      duplicate1.duplicate[B]
+    override def duplicate[B >: A <: AnyRef: ClassTag](el: EventLogger): Duplicate[B] =
+      el.section("Original.duplicate") { el =>
+        duplicate1(el).duplicate[B](el)
+      }
 
-    override def duplicate1: Duplicate[A] =
-      Duplicate[A](
-        this,
-        thisRef.extend(thisRef.classLoader),
-        methods,
-        Map.empty,
-        fields,
-        Map.empty,
-        Map.empty
-      )
+    override def duplicate1(el: EventLogger): Duplicate[A] =
+      Instance.duplicate(this, this, thisRef, el)
 
     override def methodBody(cr: ClassRef, mr: MethodRef) =
       if (mr.isInit) MethodBody.parse(allJConstructors(cr -> mr))
@@ -135,11 +140,9 @@ object Instance {
   case class Duplicate[A <: AnyRef](
       orig: Original[_ <: A],
       override val thisRef: ClassRef.Extend,
-      superMethods: Map[(ClassRef, MethodRef), MethodAttribute],
       thisMethods: Map[MethodRef, MethodBody],
-      superFields: Map[(ClassRef, FieldRef), Field], // super class field values
-      thisFields: Map[FieldRef, Field],
-      fieldValues: Map[(ClassRef, FieldRef), Field]
+      thisFields: Map[FieldRef, FieldAttribute],
+      fieldValues: Map[(ClassRef, FieldRef), Data.Concrete]
   ) extends Instance[A] {
     override final def hashCode() =
       System.identityHashCode(this)
@@ -149,20 +152,23 @@ object Instance {
       case _ => false
     }
 
-    def setFieldValues(vs: Map[(ClassRef, FieldRef), Field]): Duplicate[A] = {
+    def superRef: ClassRef.Concrete =
+      thisRef.superClassRef
+
+    def setFieldValues(vs: Map[(ClassRef, FieldRef), Data.Concrete]): Duplicate[A] = {
       require(vs.keySet subsetOf fields.keySet)
 
       val (thisValues, superValues) =
         vs.partition { case ((cr, fr), f) => cr == thisRef }
 
       copy(
-        fieldValues = fieldValues ++ superValues,
-        thisFields = thisFields ++ thisValues.map { case ((cr, fr), f) => (fr -> f) }
+        fieldValues = fieldValues ++ vs
       )
     }
 
     override def toString = s"Instance.Duplicate(${thisRef})"
-    override def pretty: String = s"""class ${thisRef}
+    override def pretty: String = {
+      s"""class ${thisRef}
 constructor:
 ${constructorBody.descriptor}
 ${
@@ -179,16 +185,17 @@ ${body.pretty}"""
 New fields:
 ${
       thisFields.map {
-        case (fr, field) => s"$fr ${field.attribute}"
+        case (fr, attr) => s"$fr $attr"
       }.mkString("\n")
     }
 Super fields:
 ${
-      superFields.map {
-        case ((cr, fr), f) => s"$cr.$fr ${f.attribute}"
+      fields.filterNot(_._1._1 == thisRef).map {
+        case ((cr, fr), attr) => s"$cr.$fr ${attr}"
       }.mkString("\n")
     }
 """
+    }
 
     def addMethod(mr: MethodRef, body: MethodBody): Duplicate[A] = {
       require(mr.descriptor == body.descriptor)
@@ -201,7 +208,10 @@ ${
 
     def addField(fr: FieldRef, field: Field): Duplicate[A] = {
       require(!field.attribute.isStatic)
-      copy(thisFields = thisFields + (fr -> field))
+      copy(
+        thisFields = thisFields + (fr -> field.attribute),
+        fieldValues = fieldValues + ((thisRef.upcast[ClassRef] -> fr) -> field.data)
+      )
     }
 
     def addFields(fs: Map[FieldRef, Field]): Duplicate[A] =
@@ -217,57 +227,23 @@ ${
       }
     }
 
-    override def duplicate1 =
+    override def duplicate1(el: EventLogger) =
       rewriteThisRef(thisRef.anotherUniqueName)
 
-    override def duplicate[B >: A <: AnyRef: ClassTag]: Duplicate[B] = {
+    override def duplicate[B >: A <: AnyRef: ClassTag](el: EventLogger): Duplicate[B] = {
       val newSuperRef = ClassRef.of(implicitly[ClassTag[B]].runtimeClass)
-      val newRef = newSuperRef.extend(thisRef.anotherUniqueName.name, thisRef.classLoader)
-      val fieldMappings: Map[(ClassRef, FieldRef), FieldRef] =
-        superFields
-          .keys
-          .filter { case (c, f) => c < newSuperRef }
-          .map { case (c, f) => (c, f) -> f.anotherUniqueName(f.name) }
-          .toMap
-      val newThisFields =
-        superFields
-          .flatMap {
-            case (cf, field) =>
-              fieldMappings.get(cf).map { fr =>
-                fr -> field.copy(attribute = field.attribute.makePrivate)
-              }
-          }
-      // TODO: support super methods
-      val newThisMethods =
-        superMethods
-          .filter { case ((cr, mr), ma) => cr < newSuperRef }
-          .map {
-            case ((cr, mr), ma) =>
-              import Bytecode._
-              val body = orig.methodBody(cr, mr)
-              mr -> body.rewrite {
-                case iv @ invokevirtual(cref, mref) if cref < newSuperRef =>
-                  invokevirtual(newRef, mref)
-                case bc @ getfield(cref, fref) if fieldMappings.contains(cref -> fref) =>
-                  getfield(newRef, fieldMappings(cref -> fref))
-                case bc @ putfield(cref, fref) if fieldMappings.contains(cref -> fref) =>
-                  putfield(newRef, fieldMappings(cref -> fref))
-              }
-          }
-      copy[B](
-        superMethods = superMethods.filterNot { case ((cr, mr), ma) => cr < newSuperRef },
-        superFields = superFields.filterNot { case ((cr, fr), f) => cr < newSuperRef },
-        thisMethods = thisMethods ++ newThisMethods,
-        thisFields = thisFields ++ newThisFields
-      ).rewriteThisRef(newRef)
+      Instance.duplicate(this, orig, newSuperRef, el)
     }
 
     // TODO: should we replace thisRef in method/field signature?
-    // TODO: should we replace only if objectref == this ?
     def rewriteThisRef(newRef: ClassRef.Extend): Duplicate[A] =
       copy(
         thisRef = newRef,
-        thisMethods = thisMethods.map { case (ref, body) => ref -> body.rewriteClassRef(thisRef, newRef) }
+        thisMethods = thisMethods.map { case (ref, body) => ref -> body.rewriteClassRef(thisRef, newRef) },
+        fieldValues = fieldValues.map { case (k @ (cr, fr), v) =>
+          if(cr == thisRef) ((newRef -> fr) -> v)
+          else k -> v
+        }
       )
 
     override def methodBody(cr: ClassRef, mr: MethodRef) =
@@ -275,17 +251,20 @@ ${
       else if (thisRef < cr) orig.methodBody(cr, mr)
       else throw new IllegalArgumentException(s"Method not found: ${cr.pretty}.${mr.str}")
 
-    override def methods =
+    lazy val superMethods = orig.methods.filter { case ((cr, mr), _) => cr >= superRef }
+    lazy val superFields = orig.fields.filter { case ((cr, _), _) => cr >= superRef }
+
+    override lazy val methods =
       superMethods ++ thisMethods.map { case (k, v) => (thisRef -> k) -> v.attribute }
 
     override lazy val fields: Map[(ClassRef, FieldRef), Field] =
       superFields.map {
-        case ((cr, fr), f) => (cr -> fr) -> fieldValues.get(cr -> fr).getOrElse(f)
-      } ++ thisFields.map { case (fref, f) => ((thisRef -> fref) -> f) }
+        case (k @ (cr, fr), f) => k -> fieldValues.get(cr -> fr).fold(f) { data => f.copy(data = data) }
+      } ++ thisFields.map { case (fr, fa) => ((thisRef -> fr) -> Field(fr.descriptor, fa, fieldValues(thisRef -> fr))) }
 
     def superClass: Class[_] = thisRef.superClassRef.loadClass
 
-    lazy val thisFieldsSeq: Seq[(FieldRef, Field)] = thisFields.toSeq
+    lazy val thisFieldsSeq: Seq[(FieldRef, Data.Concrete)] = thisFields.keys.map { fr => fr -> fieldValues(thisRef, fr) }.toSeq
     lazy val superConstructor: Analyze.SetterConstructor =
       Analyze.findSetterConstructor(this, superClass, superFields) getOrElse {
         throw new TransformException(s"Usable constructor not found")
@@ -293,7 +272,7 @@ ${
     lazy val superConstructorArgs: Seq[Any] = superConstructor.toArguments(superFields)
     lazy val constructorArgs: Seq[(TypeRef.Public, Any)] =
       thisFieldsSeq
-        .map { case (r, f) => (f.descriptor.typeRef -> f.data.concreteValue) } ++
+        .map { case (fr, data) => (fr.descriptor.typeRef -> data.concreteValue) } ++
         superConstructor.descriptor.args.zip(superConstructorArgs)
 
     lazy val constructorDescriptor = MethodDescriptor(TypeRef.Void, constructorArgs.map(_._1))
@@ -350,6 +329,10 @@ ${
       val ctBase = classPool.get(superClass.getName)
 
       val klass = classPool.makeClass(thisRef.name, ctBase)
+      klass.setModifiers(klass.getModifiers() | Modifier.PUBLIC)
+      thisRef.interfaces.foreach { i =>
+        klass.addInterface(classPool.get(i.getName))
+      }
       val constPool = klass.getClassFile.getConstPool
       val ctObject = classPool.get("java.lang.Object")
       import Bytecode._
@@ -361,13 +344,14 @@ ${
             minfo.setCodeAttribute(codeAttribute)
             val sm = javassist.bytecode.stackmap.MapMaker.make(classPool, minfo)
             codeAttribute.setAttribute(sm)
+            minfo.setAccessFlags(body.attribute.toInt)
             klass.getClassFile.addMethod(minfo)
         }
 
       thisFields.foreach {
-        case (ref, field) =>
+        case (ref, attr) =>
           val ctf = new CtField(ctClass(ref.descriptor.typeRef), ref.name, klass)
-          ctf.setModifiers(field.attribute.toInt)
+          ctf.setModifiers(attr.toInt)
           klass.addField(ctf)
       }
 
@@ -387,7 +371,9 @@ ${
       val sm = javassist.bytecode.stackmap.MapMaker.make(classPool, ctorMethodInfo)
       ctorCA.setAttribute(sm)
 
-      val concreteClass = klass.toClass(classLoader, null)
+      classLoader.registerClass(thisRef.name, klass.toBytecode)
+
+      val concreteClass = classLoader.loadClass(thisRef.name)
       val value =
         try {
           concreteClass
@@ -429,6 +415,116 @@ ${
       //   * FAIL if ANY OF
       //     * `c` is native
       //     * `c` may have side-effect
+    }
+  }
+
+  private[this] implicit class Upcast[A](val a: A) extends AnyVal {
+    def upcast[B >: A]: B = a.asInstanceOf[B]
+  }
+
+  private def duplicate[A <: AnyRef, B >: A <: AnyRef](o: Instance[A], original: Original[_ <: A], superRef: ClassRef.Concrete, el: EventLogger): Duplicate[B] = {
+    el.section("duplicate") { el =>
+      el.log(s"from = ${o.thisRef}")
+      el.log(s"new superclass = ${superRef}")
+
+      // TODO: reject if dependent method is not moveable
+      // TODO: use same-runtime-package accessor class
+
+      val thisRef = superRef.extend(new AccessibleClassLoader(superRef.classLoader))
+      val overridableVirtualMethods =
+        o.virtualMethods.keySet
+          .map { mr => o.resolveVirtualMethod(mr) -> mr }
+          .filter { case (cr, _) => cr < ClassRef.Object }
+          .filter { case k @ (cr, mr) => (cr < superRef) || !o.methods(k).isFinal }
+          .filterNot { case k @ (cr, mr) => o.methods(k).isNative }
+      el.logCMethods("overridable virtual methods", overridableVirtualMethods)
+
+      val requiredMethods =
+        o.extendMethods(overridableVirtualMethods)
+          .filter { case (cr, _) => cr < ClassRef.Object }
+          .filterNot { case k @ (cr, mr) => o.methods(k).isNative }
+          .map { case k @ (cr, mr) => k -> o.dataflow(cr, mr) }
+          .toMap
+      el.logCMethods("required methods",requiredMethods.keys)
+
+      val methodRenaming =
+        requiredMethods.collect { case (k @ (cr, mr), df) if !overridableVirtualMethods.contains(k) =>
+          (k -> mr.anotherUniqueName())
+        }
+      el.logCMethods("renamed methods", methodRenaming.keys)
+
+      val requiredFields =
+        requiredMethods.values.flatMap { df => df.usedFieldsOf(o) }
+          .map { case (cr, fr) => o.resolveField(cr, fr) -> fr }
+          .toSet
+      el.logCFields("required fields", requiredFields)
+
+      requiredFields foreach { case k @ (cr, fr) =>
+        val f = o.fields(k)
+        if(cr >= superRef && f.attribute.isPrivate && !f.attribute.isFinal)
+          throw new TransformException(s"Required field is non-final private: $cr.$fr")
+      }
+
+      val fieldRenaming =
+        requiredFields
+          .filter { case k @ (cr, fr) => cr < superRef || o.fields(k).attribute.isPrivate }
+          .map { case k @ (cr, fr) => k -> fr.anotherUniqueName() }
+          .toMap
+      el.logCFields("renamed fields", fieldRenaming.keys)
+
+      val thisMethods =
+        requiredMethods.map { case (k @ (cr, mr), df) =>
+          val newMr = methodRenaming.get(k).getOrElse(mr)
+          import Bytecode._
+          newMr -> df.body.rewrite {
+            case bc @ invokevirtual(cr, mr) if df.mustThis(bc.objectref) =>
+              val vcr = o.resolveVirtualMethod(mr)
+              methodRenaming.get(vcr -> mr).fold {
+                bc.rewriteClassRef(thisRef)
+              } { newMr =>
+                bc.rewriteMethodRef(thisRef, newMr)
+              }
+            case bc @ invokeinterface(cr, mr, _) if df.mustThis(bc.objectref) =>
+              val vcr = o.resolveVirtualMethod(mr)
+              methodRenaming.get(vcr -> mr).fold {
+                bc.rewriteClassRef(thisRef)
+              } { newMr =>
+                bc.rewriteMethodRef(thisRef, newMr)
+              }
+            case bc @ invokespecial(cr, mr) if df.mustThis(bc.objectref) =>
+              // TODO: resolve special
+              methodRenaming.get(cr -> mr).fold {
+                bc
+              } { newMr =>
+                bc.rewriteMethodRef(thisRef, newMr)
+              }
+            case bc: InstanceFieldAccess if df.mustThis(bc.objectref) =>
+              fieldRenaming.get(o.resolveField(bc.classRef, bc.fieldRef) -> bc.fieldRef).fold(bc) { newFr =>
+                bc.rewriteFieldRef(thisRef, newFr)
+              }
+          }
+        }
+      el.logMethods("thisMethods", thisMethods.keys)
+
+      val thisFields =
+        fieldRenaming.map { case (k @ (cr, fr), newFr) =>
+          newFr -> o.fields(k).attribute
+        }
+      el.logFields("thisFields", thisFields.keys)
+
+      val fieldValues =
+        fieldRenaming.map { case (k @ (cr, fr), newFr) =>
+          (thisRef.upcast[ClassRef] -> newFr) -> o.fields(k).data
+        }
+      el.logCFields("valued fields", fieldValues.keys)
+
+      Duplicate[B](
+        original,
+        thisRef,
+        thisMethods,
+        thisFields,
+        fieldValues
+      )
     }
   }
 

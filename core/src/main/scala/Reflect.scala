@@ -46,5 +46,13 @@ object Reflect {
 
   def supers(klass: Class[_]): Seq[Class[_]] =
     klass +: Option(klass.getSuperclass).toSeq.flatMap(supers)
+
+  def superClassOf(cr: ClassRef): Option[ClassRef] =
+    cr match {
+      case cr @ ClassRef.Concrete(_, _) =>
+        Option(cr.loadClass.getSuperclass).map(ClassRef.of)
+      case ClassRef.Extend(s, _, _, _) =>
+        Some(s)
+    }
 }
 

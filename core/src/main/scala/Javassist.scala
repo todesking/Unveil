@@ -39,12 +39,20 @@ object Javassist {
           out.addReturn(CtClass.longType)
         case areturn() =>
           out.add(0xB0)
+        case freturn() =>
+          out.add(0xAE)
         case dreturn() =>
           out.add(0xAF)
         case iload(n) =>
           out.addIload(n)
         case aload(n) =>
           out.addAload(n)
+        case fload(n) =>
+          out.addFload(n)
+        case dload(n) =>
+          out.addDload(n)
+        case lload(n) =>
+          out.addLload(n)
         case istore(n) =>
           out.addIstore(n)
         case astore(n) =>
@@ -65,6 +73,8 @@ object Javassist {
           out.add(0x58)
         case iadd() =>
           out.add(0x60)
+        case imul() =>
+          out.add(0x68)
         case isub() =>
           out.add(0x64)
         case if_acmpne(target) =>
@@ -79,6 +89,8 @@ object Javassist {
           out.addInvokespecial(classRef.binaryName, methodRef.name, methodRef.descriptor.str)
         case invokestatic(classRef, methodRef) =>
           out.addInvokestatic(classRef.binaryName, methodRef.name, methodRef.descriptor.str)
+        case invokeinterface(classRef, methodRef, count) =>
+          out.addInvokeinterface(classRef.binaryName, methodRef.name, methodRef.descriptor.str, count)
         case if_icmpge(target) =>
           out.add(0xA2)
           jumps(out.getSize) = (out.getSize - 1) -> target
@@ -185,7 +197,7 @@ object Javassist {
             onInstruction(index, nop())
           case 0x01 => // aconst_null
             onInstruction(index, aconst_null())
-          // TODO
+
           case 0x03 => // iconst_0
             onInstruction(index, iconst(0))
           case 0x04 => // iconst_1
@@ -200,15 +212,51 @@ object Javassist {
             onInstruction(index, iconst(5))
           case 0x09 => // lconst_0
             onInstruction(index, lconst(0))
-          // TODO
           case 0x10 => // bipush
             onInstruction(index, iconst(it.signedByteAt(index + 1)))
           case 0x11 => // sipush
             onInstruction(index, iconst(it.s16bitAt(index + 1)))
-          // TODO
+
+          case 0x16 => // lload
+            onInstruction(index, lload(it.byteAt(index + 1)))
+          case 0x17 => // fload
+            onInstruction(index, fload(it.byteAt(index + 1)))
+          case 0x18 => // dload
+            onInstruction(index, dload(it.byteAt(index + 1)))
+          case 0x19 => // aload
+            onInstruction(index, aload(it.byteAt(index + 1)))
+          case 0x1A => // iload_0
+            onInstruction(index, iload(0))
           case 0x1B => // iload_1
             onInstruction(index, iload(1))
-          // TODO
+          case 0x1C => // iload_2
+            onInstruction(index, iload(2))
+          case 0x1D => // iload_3
+            onInstruction(index, iload(3))
+          case 0x1E => // lload_0
+            onInstruction(index, lload(0))
+          case 0x1F => // lload_1
+            onInstruction(index, lload(1))
+          case 0x20 => // lload_2
+            onInstruction(index, lload(2))
+          case 0x21 => // lload_3
+            onInstruction(index, lload(3))
+          case 0x22 => // fload_0
+            onInstruction(index, fload(0))
+          case 0x23 => // fload_1
+            onInstruction(index, fload(1))
+          case 0x24 => // fload_2
+            onInstruction(index, fload(2))
+          case 0x25 => // fload_3
+            onInstruction(index, fload(3))
+          case 0x26 => // dload_0
+            onInstruction(index, dload(0))
+          case 0x27 => // dload_1
+            onInstruction(index, dload(1))
+          case 0x28 => // dload_2
+            onInstruction(index, dload(2))
+          case 0x29 => // dload_3
+            onInstruction(index, dload(3))
           case 0x2A => // aload_0
             onInstruction(index, aload(0))
           case 0x2B => // aload_1
@@ -217,10 +265,19 @@ object Javassist {
             onInstruction(index, aload(2))
           case 0x2D => // aload_3
             onInstruction(index, aload(3))
-          // TODO
+
           case 0x3C => // istore_1
             onInstruction(index, istore(1))
-          // TODO
+
+          case 0x60 => // iadd
+            onInstruction(index, iadd())
+
+          case 0x64 => // isub
+            onInstruction(index, isub())
+
+          case 0x68 => // imul
+            onInstruction(index, imul())
+
           case 0xA2 => // if_icmpge
             onInstruction(index, if_icmpge(addr2jt(index + it.s16bitAt(index + 1))))
           case 0xA4 => // if_icmple
@@ -228,30 +285,25 @@ object Javassist {
               index,
               if_icmple(addr2jt(index + it.s16bitAt(index + 1)))
             )
-          // TODO
+
           case 0xA6 => // if_acmpne
             onInstruction(index, if_acmpne(addr2jt(index + it.s16bitAt(index + 1))))
           case 0xA7 => // goto
             onInstruction(index, goto(addr2jt(index + it.s16bitAt(index + 1))))
-          // TODO
+
           case 0xAC => // ireturn
             onInstruction(index, ireturn())
-          // TODO
           case 0xAD => // lreturn
             onInstruction(index, lreturn())
-          // TODO
+          case 0xAE => // freturn
+            onInstruction(index, freturn())
           case 0xAF => // dreturn
             onInstruction(index, dreturn())
-          case 0x60 => // iadd
-            onInstruction(index, iadd())
-          case 0x64 => // isub
-            onInstruction(index, isub())
-          // TODO
+
           case 0xB0 => // areturn
             onInstruction(index, areturn())
           case 0xB1 => // return
             onInstruction(index, vreturn())
-          // TODO
           case 0xB2 => // getstatic
             val constIndex = it.u16bitAt(index + 1)
             val className = cpool.getFieldrefClassName(constIndex)
@@ -260,7 +312,9 @@ object Javassist {
             val fieldDescriptor = FieldDescriptor.parse(cpool.getFieldrefType(constIndex), jClass.getClassLoader)
             val fieldRef = FieldRef(fieldName, fieldDescriptor)
             onInstruction(index, getstatic(classRef, fieldRef))
+
           case 0xB4 => // getfield
+            // TODO: refactor
             val constIndex = it.u16bitAt(index + 1)
             val className = cpool.getFieldrefClassName(constIndex)
             val classRef = ClassRef.of(jClass.getClassLoader.loadClass(className))
@@ -277,6 +331,7 @@ object Javassist {
             val fieldRef = FieldRef(fieldName, fieldDescriptor)
             onInstruction(index, putfield(classRef, fieldRef))
           case 0xB6 => // invokevirtual
+            // TODO: refactor
             val constIndex = it.u16bitAt(index + 1)
             val className = cpool.getMethodrefClassName(constIndex)
             val methodName = cpool.getMethodrefName(constIndex)
@@ -315,10 +370,28 @@ object Javassist {
                 MethodRef(methodName, MethodDescriptor.parse(methodType, jClass.getClassLoader))
               )
             )
+          case 0xB9 => // invokeinterface
+            val count = it.byteAt(index + 3)
+            val constIndex = it.u16bitAt(index + 1)
+            val className = cpool.getMethodrefClassName(constIndex)
+            val methodName = cpool.getMethodrefName(constIndex)
+            val methodType = cpool.getMethodrefType(constIndex)
+            val classRef = ClassRef.of(className, jClass.getClassLoader)
+            onInstruction(
+              index,
+              invokeinterface(
+                classRef,
+                MethodRef(methodName, MethodDescriptor.parse(methodType, jClass.getClassLoader)),
+                count
+              )
+            )
+
           case 0xBF => // athrow
             onInstruction(index, athrow())
+
           case 0xC7 => // ifnonnull
             onInstruction(index, ifnonnull(addr2jt(index + it.s16bitAt(index + 1))))
+
           case unk =>
             throw new UnsupportedOpcodeException(ClassRef.of(jClass), mRef, unk)
         }

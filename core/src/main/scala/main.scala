@@ -19,6 +19,12 @@ case class PartialInstance(
 // TODO: add query methods about types(isDoubleWord etc) for FrameUpdate
 case class FrameItem(label: DataLabel.Out, data: Data, placedBy: Option[Bytecode.Label])
 
+class AccessibleClassLoader(parent: ClassLoader) extends ClassLoader(parent) {
+  def registerClass(name: String, bytes: Array[Byte]): Unit = {
+    defineClass(name, bytes, 0, bytes.size)
+  }
+}
+
 case class CodeFragment(bytecode: Seq[Bytecode], jumpTargets: Map[JumpTarget, Bytecode.Label] = Map.empty) {
   def prependBytecode(bcs: Seq[Bytecode]): CodeFragment =
     copy(bytecode = bcs ++ bytecode)

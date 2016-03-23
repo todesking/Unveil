@@ -11,7 +11,8 @@ case class MethodRef(name: String, descriptor: MethodDescriptor) {
   def ret: TypeRef.Public = descriptor.ret
   def renamed(newName: String): MethodRef = copy(name = newName)
   def anotherUniqueName(base: String*): MethodRef =
-    renamed(MethodRef.uniqueName(base: _*))
+    if(base.isEmpty) anotherUniqueName(name)
+    else renamed(MethodRef.uniqueName(base: _*))
 }
 object MethodRef {
   def from(m: Constructor[_]): MethodRef =

@@ -59,7 +59,7 @@ class DataFlow(val body: MethodBody, val self: Data.Reference) {
         import Bytecode._
         bc match {
           case bc: InstanceFieldAccess if mustInstance(bc.objectref, i) =>
-            agg + (bc.classRef -> bc.fieldRef)
+            agg + (i.resolveField(bc.classRef, bc.fieldRef) -> bc.fieldRef)
           case _ => agg
         }
     }
@@ -70,6 +70,8 @@ class DataFlow(val body: MethodBody, val self: Data.Reference) {
         import Bytecode._
         bc match {
           case bc @ invokevirtual(cr, mr) if mustInstance(bc.objectref, i) =>
+            agg + (i.resolveVirtualMethod(mr) -> mr)
+          case bc @ invokeinterface(cr, mr, _) if mustInstance(bc.objectref, i) =>
             agg + (i.resolveVirtualMethod(mr) -> mr)
           case bc @ invokespecial(cr, mr) if mustInstance(bc.objectref, i) =>
             // TODO: Special method resolution
@@ -132,12 +134,12 @@ class DataFlow(val body: MethodBody, val self: Data.Reference) {
         val data = Data.Unsure(t)
         if (t.isDoubleWord)
           Seq(
+            FrameItem(label, data, None),
             FrameItem(
               DataLabel.out(s"second word of ${label.name}"),
               data.secondWordData,
               None
-            ),
-            FrameItem(label, data, None)
+            )
           )
         else
           Seq(FrameItem(label, data, None))

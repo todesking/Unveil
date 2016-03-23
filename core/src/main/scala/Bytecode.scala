@@ -146,6 +146,9 @@ object Bytecode {
   sealed abstract class Load1 extends LocalAccess {
     override def nextFrame(f: Frame) = update(f).load1(localIndex)
   }
+  sealed abstract class Load2 extends LocalAccess {
+    override def nextFrame(f: Frame) = update(f).load2(localIndex)
+  }
 
   sealed abstract class Store1 extends LocalAccess {
     override def nextFrame(f: Frame) = update(f).store1(localIndex)
@@ -237,6 +240,18 @@ object Bytecode {
     override type Self = aload
     override def rewriteLocalIndex(m: Int) = if (localIndex == m) self else aload(m)
   }
+  case class fload(override val localIndex: Int) extends Load1 {
+    override type Self = fload
+    override def rewriteLocalIndex(m: Int) = if (localIndex == m) self else fload(m)
+  }
+  case class dload(override val localIndex: Int) extends Load2 {
+    override type Self = dload
+    override def rewriteLocalIndex(m: Int) = if (localIndex == m) self else dload(m)
+  }
+  case class lload(override val localIndex: Int) extends Load2 {
+    override type Self = lload
+    override def rewriteLocalIndex(m: Int) = if (localIndex == m) self else lload(m)
+  }
   case class istore(override val localIndex: Int) extends Store1 {
     override type Self = istore
     override def rewriteLocalIndex(m: Int) = if (localIndex == m) self else istore(m)
@@ -248,6 +263,9 @@ object Bytecode {
 
   case class ireturn() extends XReturn {
     override def returnType = TypeRef.Int
+  }
+  case class freturn() extends XReturn {
+    override def returnType = TypeRef.Float
   }
   case class dreturn() extends XReturn {
     override def returnType = TypeRef.Double
@@ -321,11 +339,21 @@ object Bytecode {
     override def operandType = TypeRef.Int
     override def op(value1: Int, value2: Int) = value1 - value2
   }
+  case class imul() extends PrimitiveBinOp[Int] {
+    override def operandType = TypeRef.Int
+    override def op(value1: Int, value2: Int) = value1 * value2
+  }
   case class invokevirtual(override val classRef: ClassRef, override val methodRef: MethodRef) extends InvokeInstanceMethod {
     override type Self = invokevirtual
     override def withNewClassRef(newRef: ClassRef) = copy(classRef = newRef)
     override def withNewMehtodRef(newRef: MethodRef) = copy(methodRef = newRef)
     override def pretty = s"invokevirtual ${classRef.pretty}.${methodRef.str}"
+  }
+  case class invokeinterface(override val classRef: ClassRef, override val methodRef: MethodRef, count: Int) extends InvokeInstanceMethod {
+    override type Self = invokeinterface
+    override def withNewClassRef(newRef: ClassRef) = copy(classRef = newRef)
+    override def withNewMehtodRef(newRef: MethodRef) = copy(methodRef = newRef)
+    override def pretty = s"invokeinterface ${classRef.pretty}.${methodRef.str}"
   }
   case class invokespecial(override val classRef: ClassRef, override val methodRef: MethodRef) extends InvokeInstanceMethod {
     override type Self = invokespecial
@@ -353,7 +381,7 @@ object Bytecode {
       val data =
         self match {
           case Data.Reference(_, instance) =>
-            val field = instance.fields(classRef -> fieldRef)
+            val field = instance.fields(instance.resolveField(classRef, fieldRef) -> fieldRef)
             if (field.isFinal) field.data
             else Data.Unsure(fieldRef.descriptor.typeRef)
           case _ =>

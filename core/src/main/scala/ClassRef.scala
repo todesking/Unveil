@@ -17,6 +17,12 @@ sealed abstract class ClassRef {
   def >(rhs: ClassRef): Boolean =
     ClassRef.compare(this, rhs).map { case -1 => false; case 0 => false; case 1 => true } getOrElse false
 
+  def >=(rhs: ClassRef): Boolean =
+    this > rhs || this == rhs
+
+  def <=(rhs: ClassRef): Boolean =
+    this < rhs || this == rhs
+
   def toTypeRef: TypeRef.Reference = TypeRef.Reference(this)
   def renamed(newName: String): ClassRef
 
@@ -57,11 +63,13 @@ object ClassRef {
     lazy val loadClass: Class[_] =
       (if (classLoader == null) ClassLoader.getSystemClassLoader else classLoader).loadClass(name)
 
-    def extend(name: String, cl: ClassLoader): Extend =
-      Extend(this, name, cl)
+    def extend(name: String, cl: AccessibleClassLoader): Extend = {
+      if (loadClass.isInterface) Extend(ClassRef.Object, name, cl, Seq(loadClass))
+      else Extend(this, name, cl, Seq.empty)
+    }
 
     // TODO: preserve package name
-    def extend(cl: ClassLoader): Extend =
+    def extend(cl: AccessibleClassLoader): Extend =
       extend(uniqueNamer("generated"), cl)
 
     override def renamed(newName: String): Concrete =
@@ -69,8 +77,13 @@ object ClassRef {
   }
 
   // TODO: interface
-  case class Extend(superClassRef: ClassRef.Concrete, override val name: String, override val classLoader: ClassLoader) extends ClassRef {
-    override def pretty = s"${name} <: ${superClassRef.name}@${System.identityHashCode(classLoader)}"
+  case class Extend(
+      superClassRef: ClassRef.Concrete,
+      override val name: String,
+      override val classLoader: AccessibleClassLoader,
+      interfaces: Seq[Class[_]]
+  ) extends ClassRef {
+    override def pretty = s"${name}(<:${superClassRef.name} ${interfaces.map(_.getName).mkString(", ")})@${System.identityHashCode(classLoader)}"
     def anotherUniqueName: Extend =
       copy(name = uniqueNamer(name))
     override def renamed(newName: String): Extend =
