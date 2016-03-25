@@ -7,10 +7,12 @@ object Main {
     (-10 to 10) foreach { i =>
       val baseline = Bench.baseline(i)
       val standard = Bench.standardF(i)
-      val fast = Bench.fastF(i)
-      println((i, baseline, standard, fast))
+      val fused = Bench.fusedF(i)
+      val fuseInlined = Bench.fuseInlinedF(i)
+      println((i, baseline, standard, fused, fuseInlined))
       assert(baseline == standard)
-      assert(baseline == fast)
+      assert(baseline == fused)
+      assert(baseline == fuseInlined)
     }
   }
 }
@@ -35,18 +37,24 @@ object Bench {
     F andThen F andThen F andThen F
   }
 
-  val fastF = {
+  val fusedF = {
     def F = f1 andThen f2 andThen f3 andThen f4 andThen f5 andThen f6 andThen f7 andThen f8
     val FF = F andThen F andThen F andThen F
     import com.todesking.unveil.{ Transformer, Instance }
     val el = Transformer.newEventLogger
     val i = Instance.of(FF).duplicate[Function1[Int, Int]](el)
-    val ti = try {
+    val ti =
+      Transformer.fieldFusion(i, el)
+    ti.get.materialized.value
+  }
+  val fuseInlinedF = {
+    def F = f1 andThen f2 andThen f3 andThen f4 andThen f5 andThen f6 andThen f7 andThen f8
+    val FF = F andThen F andThen F andThen F
+    import com.todesking.unveil.{ Transformer, Instance }
+    val el = Transformer.newEventLogger
+    val i = Instance.of(FF).duplicate[Function1[Int, Int]](el)
+    val ti =
       (Transformer.fieldFusion >>> Transformer.methodInlining)(i, el)
-    } finally {
-      println(el.pretty)
-    }
-    println(ti.map(_.pretty))
     ti.get.materialized.value
   }
 }
@@ -67,9 +75,16 @@ class Bench {
   }
 
   @Benchmark
-  def fast(): Any = {
+  def fused(): Any = {
     var x = 0
-    (0 until 1000).foreach { i => x += Bench.fastF(i) }
+    (0 until 1000).foreach { i => x += Bench.fusedF(i) }
+    x
+  }
+
+  @Benchmark
+  def fuseInlined(): Any = {
+    var x = 0
+    (0 until 1000).foreach { i => x += Bench.fuseInlinedF(i) }
     x
   }
 }

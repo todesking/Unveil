@@ -255,7 +255,6 @@ ${eName.id(initialFrame.effect)} -> start [style="dotted"]
     dataPlacers: Map[DataLabel.In, Bytecode],
     beforeFrames: Map[Bytecode.Label, Frame]
     ) = {
-    println(body.pretty)
     val dataMerges = new AbstractLabel.Merger[DataLabel.Out](DataLabel.out("merged"))
     val effectMerges = new AbstractLabel.Merger[Effect](Effect.fresh())
     def mergeData(d1: FrameItem, d2: FrameItem): FrameItem =
