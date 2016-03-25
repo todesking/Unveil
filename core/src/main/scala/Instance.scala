@@ -429,7 +429,8 @@ ${
       el.log(s"new superclass = ${superRef}")
 
       // TODO: reject if dependent method is not moveable
-      // TODO: use same-runtime-package accessor class
+      // TODO[BUG]: use same-runtime-package accessor class
+      // TODO[BUG]: check resolved class reference is same as super class class loader's result
 
       val thisRef = superRef.extend(new AccessibleClassLoader(superRef.classLoader))
       val overridableVirtualMethods =
