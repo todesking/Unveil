@@ -26,8 +26,20 @@ class AccessibleClassLoader(parent: ClassLoader) extends ClassLoader(parent) {
 }
 
 case class CodeFragment(bytecode: Seq[Bytecode], jumpTargets: Map[JumpTarget, Bytecode.Label] = Map.empty) {
+  {
+    val labels = bytecode.map(_.label).toSet
+    val jts = bytecode.collect { case bc: Bytecode.HasJumpTargets => bc.jumpTargets }.flatten
+    require(jumpTargets.values.forall { k => labels.contains(k) })
+    require(jts.forall { jt => jumpTargets.contains(jt) })
+  }
   def prependBytecode(bcs: Seq[Bytecode]): CodeFragment =
     copy(bytecode = bcs ++ bytecode)
+  def pretty: String = bytecode.map {
+    case bc: Bytecode.HasAJumpTarget =>
+      s"L${bc.label.innerId} $bc # L${jumpTargets(bc.jumpTarget).innerId}"
+    case bc =>
+      s"L${bc.label.innerId} $bc"
+  }.mkString("\n")
 }
 object CodeFragment {
   def bytecode(bcs: Bytecode*): CodeFragment =

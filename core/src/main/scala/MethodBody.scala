@@ -16,7 +16,10 @@ case class MethodBody(
     bytecode: Seq[Bytecode],
     jumpTargets: Map[JumpTarget, Bytecode.Label]
 ) {
-  require(bytecode.nonEmpty)
+  Predef.require(bytecode.nonEmpty)
+
+  private[this] def require(cond: Boolean, detail: => String = ""): Unit =
+    MethodBody.require(this, cond, detail)
 
   def asCodeFragment: CodeFragment =
     CodeFragment(bytecode, jumpTargets)
@@ -83,7 +86,10 @@ case class MethodBody(
     } else {
       val bcs = cf.bytecode
       require(bcs.map(_.label).distinct.size == bcs.size)
-      require(bcs.tail.forall { bc => !labelToBytecode.contains(bc.label) })
+      require(bcs.tail.forall { bc => !labelToBytecode.contains(bc.label) }, {
+        val conflicts = bcs.tail.map(_.label).filter { l => labelToBytecode.contains(l) }.map { l => s"L${l.innerId}" }
+        s"Replacement bytecode conflict: target=${l}, conflict=${conflicts.mkString(", ")}, new=\n" + cf.pretty
+      })
       require(bcs.head.label == l || !labelToBytecode.contains(bcs.head.label))
       require(cf.jumpTargets.values.forall { l => bcs.exists(_.label == l) })
       require(bcs.forall { case bc: Bytecode.HasJumpTargets => bc.jumpTargets.forall { jt => cf.jumpTargets.contains(jt) }; case _ => true })
@@ -124,5 +130,11 @@ object MethodBody {
 
   def parse(m: JConstructor[_]): MethodBody =
     Javassist.decompile(m).getOrElse { throw new MethodAnalyzeException(ClassRef.of(m.getDeclaringClass), MethodRef.from(m), "CA not found") }
+
+  def require(body: MethodBody, cond: Boolean, detailMsg: => String): Unit =
+    if (!cond)
+      throw new UnveilBugException("BUG", null) {
+        override val detail = body.pretty + "\n\n" + detailMsg
+      }
 }
 

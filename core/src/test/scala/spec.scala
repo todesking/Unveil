@@ -39,6 +39,9 @@ class Spec extends FunSpec with Matchers {
         println("=== INVALID CLASS")
         println(t.instance.pretty)
         printEvents()
+      case Failed(t: UnveilBugException) =>
+        println(t.detail)
+        printEvents()
       case Failed(t) =>
         println(s"=== TEST FAILED($t)")
         printEvents()
@@ -326,9 +329,6 @@ class Spec extends FunSpec with Matchers {
         withThe(ti) {
           ti.materialized.value.apply(n) should be(expected)
         }
-
-        println(ti.pretty)
-        println(el.pretty)
       }
     }
 
@@ -373,6 +373,16 @@ class Spec extends FunSpec with Matchers {
         pending
       }
     }
+
+    // describe("new instance") {
+    //   it("handle new insn") {
+    //     class A(val value: Int) {
+    //       def foo(): A = new A(2)
+    //     }
+    //     val x = Instance.of(new A(1)).duplicate[A](el)
+    //     x.materialized.value.foo.value should be(2)
+    //   }
+    // }
 
     it("double values") {
       pending

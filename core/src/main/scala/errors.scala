@@ -45,3 +45,7 @@ class MethodTransformException(classRef: ClassRef, methodRef: MethodRef, msg: St
 
 class BytecodeTransformException(val classRef: ClassRef, val methodRef: MethodRef, override val methodBody: MethodBody, val bytecode: Bytecode, msg: String)
   extends MethodTransformException(classRef, methodRef, s"$bytecode: $msg") with UnveilException.HasMethodBody
+
+class UnveilBugException(msg: String, err: Throwable) extends RuntimeException(msg, err) {
+  def detail: String = ""
+}
