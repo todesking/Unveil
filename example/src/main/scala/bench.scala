@@ -18,17 +18,28 @@ object Main {
 }
 
 object Bench {
-  val f1: Int => Int = { x => x + 1 }
-  val f2: Int => Double = { x => x + 10.0 }
-  val f3: Double => Int = { x => (x * 100).toInt }
-  val f4: Int => Double = { x => x + 1.5 }
-  val f5: Double => Double = { x => x * 0.01 }
-  val f6: Double => Double = { x => x - 200.0 }
-  val f7: Double => Int = { x => x.toInt }
-  val f8: Int => Int = { x => x + 10 }
+  def f1_(x: Int) = x + 1
+  def f2_(x: Int) = x + 10.0
+  def f3_(x: Double) = (x * 100).toInt
+  def f4_(x: Int) = x + 1.5
+  def f5_(x: Double) = x * 0.01
+  def f6_(x: Double) = x - 200.0
+  def f7_(x: Double) = x.toInt
+  def f8_(x: Int) = x + 10
+  val f1 = f1_ _
+  val f2 = f2_ _
+  val f3 = f3_ _
+  val f4 = f4_ _
+  val f5 = f5_ _
+  val f6 = f6_ _
+  val f7 = f7_ _
+  val f8 = f8_ _
+
+  def F(x: Int) = f8_(f7_(f6_(f5_(f4_(f3_(f2_(f1_(x))))))))
+
+  val fastest: Int => Int = { x: Int => ((((((x + 1) + 10.0) * 100).toInt + 1.5) * 0.01) - 200.0).toInt + 10 }
 
   val baseline = {
-    def F(x: Int) = f8(f7(f6(f5(f4(f3(f2(f1(x))))))))
     x: Int => F(F(F(F(x))))
   }
 
@@ -60,6 +71,13 @@ object Bench {
 }
 
 class Bench {
+  @Benchmark
+  def fastest(): Any = {
+    var x = 0
+    (0 until 1000).foreach { i => x += Bench.fastest(i) }
+    x
+  }
+
   @Benchmark
   def baseline(): Any = {
     var x = 0
