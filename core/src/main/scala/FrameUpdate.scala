@@ -28,17 +28,25 @@ case class FrameUpdate(
       Map.empty
     )
 
+  private[this] def fail(msg: String): RuntimeException =
+    new RuntimeException(s"Analysis failed at L${bytecode.label} ${bytecode}: ${msg}")
+
+  private[this] def requireSingleLocal(n: Int): Unit = {
+    if(!newFrame.locals.contains(n)) throw fail(s"Local $n not defined")
+    requireSingleWord(newFrame.locals(n))
+  }
+
   private[this] def requireSecondWord(fd: FrameItem): Unit =
     if (fd.data.typeRef != TypeRef.SecondWord)
-      throw new RuntimeException(s"second word value expected but ${fd}")
+      throw fail(s"second word value expected but ${fd}")
 
   private[this] def requireSingleWord(fd: FrameItem): Unit =
     if (fd.data.typeRef.isDoubleWord || fd.data.typeRef == TypeRef.SecondWord || fd.data.typeRef == TypeRef.Undefined)
-      throw new RuntimeException(s"single word value expected but ${fd}")
+      throw fail(s"single word value expected but ${fd}")
 
   private[this] def requireDoubleWord(fd: FrameItem): Unit =
     if (!fd.data.typeRef.isDoubleWord || fd.data.typeRef == TypeRef.SecondWord || fd.data.typeRef == TypeRef.Undefined)
-      throw new RuntimeException(s"double word value expected but ${fd}")
+      throw fail(s"double word value expected but ${fd}")
 
   private[this] def makeSecondWord(fd: FrameItem): FrameItem =
     FrameItem(DataLabel.out(s"second word of ${fd.label.name}"), fd.data.secondWordData, fd.placedBy)
@@ -127,7 +135,7 @@ case class FrameUpdate(
   }
 
   private[this] def local1(n: Int): FrameItem = {
-    requireSingleWord(newFrame.locals(n))
+    requireSingleLocal(n)
     newFrame.locals(n)
   }
 

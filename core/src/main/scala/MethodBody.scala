@@ -80,24 +80,17 @@ case class MethodBody(
   def replaceBytecode(l: Bytecode.Label, cf: CodeFragment): MethodBody = {
     require(labelToBytecode.contains(l))
     require(cf.bytecode.nonEmpty)
-    if (cf.bytecode.size == 1 && cf.bytecode.head.label == l) {
+    if (cf.bytecode.size == 1 && cf.bytecode.head.label == l) { // TODO: WHY????
       // cf.jumpTargets could safely ignored
       this
     } else {
-      val bcs = cf.bytecode
-      require(bcs.map(_.label).distinct.size == bcs.size)
-      require(bcs.tail.forall { bc => !labelToBytecode.contains(bc.label) }, {
-        val conflicts = bcs.tail.map(_.label).filter { l => labelToBytecode.contains(l) }.map { l => s"L${l.innerId}" }
-        s"Replacement bytecode conflict: target=${l}, conflict=${conflicts.mkString(", ")}, new=\n" + cf.pretty
-      })
-      require(bcs.head.label == l || !labelToBytecode.contains(bcs.head.label))
-      require(cf.jumpTargets.values.forall { l => bcs.exists(_.label == l) })
-      require(bcs.forall { case bc: Bytecode.HasJumpTargets => bc.jumpTargets.forall { jt => cf.jumpTargets.contains(jt) }; case _ => true })
+      val newCf = cf.fresh()
+      val bcs = newCf.bytecode
       val first = bcs.head
       val start = bytecode.indexWhere(_.label == l)
       assert(start >= 0)
       val newBcs = bytecode.patch(start, bcs, 1)
-      val newJts = jumpTargets.map { case (jt, bcl) => if (bcl == l) (jt -> first.label) else (jt -> bcl) } ++ cf.jumpTargets
+      val newJts = jumpTargets.map { case (jt, bcl) => if (bcl == l) (jt -> first.label) else (jt -> bcl) } ++ newCf.jumpTargets
       copy(bytecode = newBcs, jumpTargets = newJts)
     }
   }

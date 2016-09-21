@@ -31,7 +31,7 @@ class Spec extends FunSpec with Matchers {
     }
     result match {
       case Failed(t: BytecodeTransformException) =>
-        println("=== FAILED")
+        println(s"=== FAILED($t)")
         println(t)
         println(t.methodBody.pretty)
         printEvents()
