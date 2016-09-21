@@ -374,15 +374,15 @@ class Spec extends FunSpec with Matchers {
       }
     }
 
-    // describe("new instance") {
-    //   it("handle new insn") {
-    //     class A(val value: Int) {
-    //       def foo(): A = new A(2)
-    //     }
-    //     val x = Instance.of(new A(1)).duplicate[A](el)
-    //     x.materialized.value.foo.value should be(2)
-    //   }
-    // }
+    describe("new instance") {
+      it("handle new insn") {
+        class A(val value: Int) {
+          def foo(): A = new A(2)
+        }
+        val x = Instance.of(new A(1)).duplicate[A](el)
+        x.materialized.value.foo.value should be(2)
+      }
+    }
 
     it("double values") {
       pending

@@ -62,8 +62,8 @@ object Bytecode {
   sealed abstract class Shuffle extends Bytecode with FallThrough {
     override type Self <: Shuffle
     override final def inputs = Seq.empty
-    override final def output = None
-    override final def effect = None
+    override final def output: Option[DataLabel.Out] = None
+    override final def effect: Option[Effect] = None
   }
   sealed abstract class Procedure extends Bytecode with FallThrough
 
@@ -564,5 +564,16 @@ object Bytecode {
     override def output = None
     override def nextFrame(f: Frame) =
       update(f).athrow(objectref)
+  }
+  case class new_(override val classRef: ClassRef) extends Procedure with HasClassRef {
+    val objectref = DataLabel.out("new")
+    override type Self = new_
+    override def fresh() = copy()
+    override def withNewClassRef(cr: ClassRef) = copy(classRef = cr)
+    override def inputs = Seq()
+    override def output = Some(objectref)
+    override def effect = None
+    override def nextFrame(f: Frame) =
+      update(f).push(FrameItem(objectref, Data.Unsure(TypeRef.Reference(classRef)), Some(label)))
   }
 }

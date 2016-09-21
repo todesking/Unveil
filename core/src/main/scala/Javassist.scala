@@ -125,6 +125,8 @@ object Javassist {
           out.addGetstatic(classRef.binaryName, fieldRef.name, fieldRef.descriptor.str)
         case putfield(classRef, fieldRef) =>
           out.addPutfield(classRef.binaryName, fieldRef.name, fieldRef.descriptor.str)
+        case new_(classRef) =>
+          out.addNew(classRef.binaryName)
       }
     }
     jumps foreach {
@@ -444,6 +446,14 @@ object Javassist {
                 MethodRef(methodName, MethodDescriptor.parse(methodType, jClass.getClassLoader)),
                 count
               )
+            )
+
+          case 0xBB => // new
+            val constIndex = it.u16bitAt(index + 1)
+            val className = cpool.getClassInfo(constIndex)
+            onInstruction(
+              index,
+              new_(ClassRef.of(className, jClass.getClassLoader))
             )
 
           case 0xBF => // athrow
