@@ -318,6 +318,9 @@ object Javassist {
           case 0x3C => // istore_1
             onInstruction(index, istore(1))
 
+          case 0x59 => // dup
+            onInstruction(index, dup())
+
           case 0x60 => // iadd
             onInstruction(index, iadd())
 
