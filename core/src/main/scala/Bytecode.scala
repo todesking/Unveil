@@ -14,6 +14,7 @@ sealed abstract class Bytecode {
   protected final def self: Self = this.asInstanceOf[Self] // :(
 
   val label: Bytecode.Label = Bytecode.Label.fresh()
+
   def inputs: Seq[DataLabel.In]
   def output: Option[DataLabel.Out]
   def effect: Option[Effect]
@@ -175,12 +176,12 @@ object Bytecode {
 
   sealed abstract class Const1 extends ConstX {
     final val out: DataLabel.Out = DataLabel.out("const(1word)")
-    override def nextFrame(f: Frame) = update(f).push1(FrameItem(out, data, Some(label)))
+    override def nextFrame(f: Frame) = update(f).push1(FrameItem(out, data))
   }
 
   sealed abstract class Const2 extends ConstX {
     final val out: DataLabel.Out = DataLabel.out("const(2word)")
-    override def nextFrame(f: Frame) = update(f).push2(FrameItem(out, data, Some(label)))
+    override def nextFrame(f: Frame) = update(f).push2(FrameItem(out, data))
   }
 
   sealed abstract class InvokeMethod extends Procedure with HasClassRef with HasMethodRef with HasEffect {
@@ -200,7 +201,7 @@ object Bytecode {
             if (t.isDoubleWord) u.pop2(a)
             else u.pop1(a)
         }
-      ret.fold(popped) { rlabel => popped.push(FrameItem(rlabel, Data.Unsure(methodRef.ret), Some(label))) }
+      ret.fold(popped) { rlabel => popped.push(FrameItem(rlabel, Data.Unsure(methodRef.ret))) }
     }
   }
   sealed abstract class InvokeInstanceMethod extends InvokeMethod {
@@ -215,7 +216,7 @@ object Bytecode {
             if (t.isDoubleWord) u.pop2(a)
             else u.pop1(a)
         }.pop1(objectref)
-      ret.fold(popped) { rlabel => popped.push(FrameItem(rlabel, Data.Unsure(methodRef.ret), Some(label))) }
+      ret.fold(popped) { rlabel => popped.push(FrameItem(rlabel, Data.Unsure(methodRef.ret))) }
     }
   }
 
@@ -393,8 +394,7 @@ object Bytecode {
                       op(v1.asInstanceOf[A], v2.asInstanceOf[A])
                     )
                   }
-                }.getOrElse { Data.Unsure(operandType) },
-                Some(label)
+                }.getOrElse { Data.Unsure(operandType) }
               )
             )
         case (d1, d2) => throw new AnalyzeException(s"$this: Type error: ${(d1, d2)}")
@@ -420,8 +420,7 @@ object Bytecode {
             result,
             f.stackTop.data.value.map { v =>
               Data.Primitive(resultType, op(v.asInstanceOf[A]))
-            }.getOrElse { Data.Unsure(resultType) },
-            Some(label)
+            }.getOrElse { Data.Unsure(resultType) }
           )
         )
     }
@@ -525,7 +524,7 @@ object Bytecode {
           case _ =>
             Data.Unsure(fieldRef.descriptor.typeRef)
         }
-      update(f).pop1(objectref).push(FrameItem(out, data, Some(label)))
+      update(f).pop1(objectref).push(FrameItem(out, data))
     }
   }
   case class getstatic(override val classRef: ClassRef, override val fieldRef: FieldRef) extends StaticFieldAccess {
@@ -540,7 +539,7 @@ object Bytecode {
     override def output = Some(out)
     override def nextFrame(f: Frame) = {
       val data = Data.Unsure(fieldRef.descriptor.typeRef) // TODO: set static field value if it is final
-      update(f).push(FrameItem(out, data, Some(label)))
+      update(f).push(FrameItem(out, data))
     }
   }
   case class putfield(override val classRef: ClassRef, override val fieldRef: FieldRef) extends InstanceFieldAccess {
@@ -574,6 +573,6 @@ object Bytecode {
     override def output = Some(objectref)
     override def effect = None
     override def nextFrame(f: Frame) =
-      update(f).push(FrameItem(objectref, Data.Unsure(TypeRef.Reference(classRef)), Some(label)))
+      update(f).push(FrameItem(objectref, Data.Unsure(TypeRef.Reference(classRef))))
   }
 }

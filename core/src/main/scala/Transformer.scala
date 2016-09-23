@@ -222,7 +222,7 @@ object Transformer {
                   CodeFragment(
                     Seq(store(bc.returnType, resultLocal)) ++ (
                       calleeDf.beforeFrames(bc.label).stack.drop(bc.returnType.wordSize).map {
-                        case FrameItem(l, d, _) =>
+                        case FrameItem(l, d) =>
                           autoPop(d.typeRef)
                       }
                     ) ++ Seq(
@@ -232,7 +232,7 @@ object Transformer {
                 case bc: VoidReturn =>
                   CodeFragment(
                     calleeDf.beforeFrames(bc.label).stack.map {
-                      case FrameItem(l, d, _) =>
+                      case FrameItem(l, d) =>
                         autoPop(d.typeRef)
                     }
                   )

@@ -128,21 +128,20 @@ class DataFlow(val body: MethodBody, val self: Data.Reference) {
 
   lazy val initialFrame: Frame = {
     val initialEffect = Effect.fresh()
-    val thisData = thisLabel.map { l => FrameItem(l, self, None) }
+    val thisData = thisLabel.map { l => FrameItem(l, self) }
     val argData = body.descriptor.args.zipWithIndex.zip(argLabels).flatMap {
       case ((t, i), label) =>
         val data = Data.Unsure(t)
         if (t.isDoubleWord)
           Seq(
-            FrameItem(label, data, None),
+            FrameItem(label, data),
             FrameItem(
               DataLabel.out(s"second word of ${label.name}"),
-              data.secondWordData,
-              None
+              data.secondWordData
             )
           )
         else
-          Seq(FrameItem(label, data, None))
+          Seq(FrameItem(label, data))
     }
     Frame((thisData.toSeq ++ argData).zipWithIndex.map(_.swap).toMap, List.empty, initialEffect)
   }
@@ -252,13 +251,12 @@ ${eName.id(initialFrame.effect)} -> start [style="dotted"]
     liveBytecode: Seq[Bytecode],
     maxLocals: Int,
     maxStackDepth: Int,
-    dataPlacers: Map[DataLabel.In, Bytecode],
     beforeFrames: Map[Bytecode.Label, Frame]
     ) = {
     val dataMerges = new AbstractLabel.Merger[DataLabel.Out](DataLabel.out("merged"))
     val effectMerges = new AbstractLabel.Merger[Effect](Effect.fresh())
     def mergeData(d1: FrameItem, d2: FrameItem): FrameItem =
-      FrameItem(dataMerges.merge(d1.label, d2.label), Data.merge(d1.data, d2.data), None) // TODO: record placedBy merge
+      FrameItem(dataMerges.merge(d1.label, d2.label), Data.merge(d1.data, d2.data)) // TODO: record placedBy merge
     def merge(f1: Frame, f2: Frame): Frame = {
       Frame(
         (f1.locals.keySet ++ f2.locals.keySet)
@@ -318,21 +316,10 @@ ${eName.id(initialFrame.effect)} -> start [style="dotted"]
       effectDependencies ++= u.effectDependencies
     }
 
-    val dataPlacers = mutable.HashMap.empty[DataLabel.In, Bytecode]
-    updates.values.foreach { u =>
-      u.bytecode.inputs.foreach { i =>
-        u.dataValues.get(i) foreach {
-          _.placedBy foreach { l =>
-            dataPlacers(i) = body.labelToBytecode(l)
-          }
-        }
-      }
-    }
-
     val allFrames = preFrames.values ++ updates.values.map(_.newFrame)
     val maxLocals = allFrames.flatMap(_.locals.keys).max + 1
     val maxStackDepth = allFrames.map(_.stack.size).max
 
-    (binding.toMap, dataValues.toMap, dataMerges.toMap, effectDependencies.toMap, effectMerges.toMap, liveBcs.values.toSeq, maxLocals, maxStackDepth, dataPlacers.toMap, preFrames.toMap)
+    (binding.toMap, dataValues.toMap, dataMerges.toMap, effectDependencies.toMap, effectMerges.toMap, liveBcs.values.toSeq, maxLocals, maxStackDepth, preFrames.toMap)
   }
 }

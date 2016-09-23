@@ -49,7 +49,7 @@ case class FrameUpdate(
       throw fail(s"double word value expected but ${fd}")
 
   private[this] def makeSecondWord(fd: FrameItem): FrameItem =
-    FrameItem(DataLabel.out(s"second word of ${fd.label.name}"), fd.data.secondWordData, fd.placedBy)
+    FrameItem(DataLabel.out(s"second word of ${fd.label.name}"), fd.data.secondWordData)
 
   def pop(t: TypeRef): FrameUpdate =
     if (t.isDoubleWord) pop2()
@@ -145,8 +145,8 @@ case class FrameUpdate(
     newFrame.locals(n)
   }
 
-  def load1(n: Int): FrameUpdate = push1(local1(n).copy(placedBy = Some(bytecode.label)))
-  def load2(n: Int): FrameUpdate = push2(local2(n).copy(placedBy = Some(bytecode.label)))
+  def load1(n: Int): FrameUpdate = push1(local1(n))
+  def load2(n: Int): FrameUpdate = push2(local2(n))
 
   def store1(n: Int): FrameUpdate = {
     requireSingleWord(newFrame.stackTop)
