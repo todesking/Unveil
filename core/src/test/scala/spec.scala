@@ -260,13 +260,12 @@ class Spec extends FunSpec with Matchers {
             MethodBody(
               foo.descriptor,
               MethodAttribute.Public,
-              Seq(
+              CodeFragment.bytecode(
                 Bytecode.aload(0),
                 Bytecode.getfield(i0.thisRef, fieldB),
                 Bytecode.invokevirtual(b.thisRef, bar),
                 Bytecode.ireturn()
-              ),
-              Map.empty
+              )
             )
           )
         withThe(i) {

@@ -236,7 +236,7 @@ object Transformer {
                         autoPop(d.typeRef)
                     }
                   )
-              }.asCodeFragment
+              }.codeFragment
                 .prependBytecode(
                   mr.descriptor.args.reverse.zipWithIndex.map { case (t, i) => store(t, i + argOffset) } ++
                     (if (calleeDf.body.isStatic) Seq.empty else Seq(astore(localOffset)))

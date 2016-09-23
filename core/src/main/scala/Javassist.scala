@@ -472,8 +472,7 @@ object Javassist {
       Some(MethodBody(
         mRef.descriptor,
         MethodAttribute.from(ctMethod.getModifiers),
-        bcs.toSeq,
-        jumpTargets.toMap
+        CodeFragment(bcs.toSeq, jumpTargets.toMap)
       ))
     }
   }

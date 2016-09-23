@@ -284,29 +284,29 @@ ${
       MethodBody(
         descriptor = constructorDescriptor,
         MethodAttribute.Public,
-        jumpTargets = Map.empty,
-        bytecode =
-        Seq(
-          Seq(aload(0)),
-          superConstructor.descriptor.args.zipWithIndex.map {
-            case (t, i) =>
-              load(t, i + thisFieldAssigns.size + 1)
-          },
+        codeFragment = CodeFragment(
           Seq(
-            invokespecial(
-              ClassRef.of(superClass),
-              superConstructor.methodRef
-            )
-          )
-        ).flatten ++ thisFieldAssigns.flatMap {
-            case (fr, i) =>
-              import Bytecode._
-              Seq(
-                aload(0),
-                load(fr.descriptor.typeRef, i),
-                putfield(thisRef, fr)
+            Seq(aload(0)),
+            superConstructor.descriptor.args.zipWithIndex.map {
+              case (t, i) =>
+                load(t, i + thisFieldAssigns.size + 1)
+            },
+            Seq(
+              invokespecial(
+                ClassRef.of(superClass),
+                superConstructor.methodRef
               )
-          }.toSeq ++ Seq(vreturn())
+            )
+          ).flatten ++ thisFieldAssigns.flatMap {
+              case (fr, i) =>
+                import Bytecode._
+                Seq(
+                  aload(0),
+                  load(fr.descriptor.typeRef, i),
+                  putfield(thisRef, fr)
+                )
+            }.toSeq ++ Seq(vreturn())
+        )
       )
     }
     override lazy val materialized: Original[A] = {

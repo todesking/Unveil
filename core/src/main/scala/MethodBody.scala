@@ -13,16 +13,16 @@ import com.todesking.scalapp.syntax._
 case class MethodBody(
     descriptor: MethodDescriptor,
     attribute: MethodAttribute,
-    bytecode: Seq[Bytecode],
-    jumpTargets: Map[JumpTarget, Bytecode.Label]
+    codeFragment: CodeFragment
 ) {
-  Predef.require(bytecode.nonEmpty)
-
   private[this] def require(cond: Boolean, detail: => String = ""): Unit =
     MethodBody.require(this, cond, detail)
 
-  def asCodeFragment: CodeFragment =
-    CodeFragment(bytecode, jumpTargets)
+  def jumpTargets: Map[JumpTarget, Bytecode.Label] =
+    codeFragment.jumpTargets
+
+  def bytecode: Seq[Bytecode] =
+    codeFragment.bytecode
 
   def isStatic: Boolean = attribute.isStatic
 
@@ -35,13 +35,13 @@ case class MethodBody(
   // TODO: Exception handler
 
   def methodReferences: Set[(ClassRef, MethodRef)] =
-    bytecode.collect { case bc: Bytecode.HasMethodRef => (bc.classRef -> bc.methodRef) }.toSet
+    codeFragment.methodReferences
 
   def fieldReferences: Set[(ClassRef, FieldRef)] =
-    bytecode.collect { case bc: Bytecode.HasFieldRef => (bc.classRef -> bc.fieldRef) }.toSet
+    codeFragment.fieldReferences
 
-  lazy val labelToBytecode: Map[Bytecode.Label, Bytecode] =
-    bytecode.map { bc => bc.label -> bc }.toMap
+  def labelToBytecode: Map[Bytecode.Label, Bytecode] =
+    codeFragment.labelToBytecode
 
   def rewrite(f: PartialFunction[Bytecode, Bytecode]): MethodBody = {
     val lifted = f.lift
@@ -56,19 +56,10 @@ case class MethodBody(
     }
   }
 
-  def rewrite_**(f: PartialFunction[Bytecode, Map[Bytecode.Label, CodeFragment]]): MethodBody = {
-    val lifted = f.lift
-    val allRewrites =
-      bytecode.foldLeft(Map.empty[Bytecode.Label, CodeFragment]) {
-        case (m, bc) =>
-          lifted(bc).fold(m) { mm =>
-            Algorithm.sharedNothingUnion(m, mm).fold {
-              throw new TransformException(s"rewrite conflict")
-            }(identity)
-          }
-      }
-    allRewrites.foldLeft(this) { case (b, (l, bcs)) => b.replaceBytecode(l, bcs) }
-  }
+  def rewrite_**(
+    f: PartialFunction[Bytecode, Map[Bytecode.Label, CodeFragment]]
+  ): MethodBody =
+    copy(codeFragment = codeFragment.rewrite_**(f))
 
   def rewriteClassRef(from: ClassRef, to: ClassRef): MethodBody = {
     rewrite { case bc: Bytecode.HasClassRef if bc.classRef == from => bc.rewriteClassRef(to) }
@@ -77,41 +68,12 @@ case class MethodBody(
   def replaceBytecode(l: Bytecode.Label, newBc: Bytecode): MethodBody =
     replaceBytecode(l, CodeFragment.bytecode(newBc))
 
-  def replaceBytecode(l: Bytecode.Label, cf: CodeFragment): MethodBody = {
-    require(labelToBytecode.contains(l))
-    require(cf.bytecode.nonEmpty)
-    if (cf.bytecode.size == 1 && cf.bytecode.head.label == l) { // TODO: WHY????
-      // cf.jumpTargets could safely ignored
-      this
-    } else {
-      val newCf = cf.fresh()
-      val bcs = newCf.bytecode
-      val first = bcs.head
-      val start = bytecode.indexWhere(_.label == l)
-      assert(start >= 0)
-      val newBcs = bytecode.patch(start, bcs, 1)
-      val newJts = jumpTargets.map { case (jt, bcl) => if (bcl == l) (jt -> first.label) else (jt -> bcl) } ++ newCf.jumpTargets
-      copy(bytecode = newBcs, jumpTargets = newJts)
-    }
-  }
+  def replaceBytecode(l: Bytecode.Label, cf: CodeFragment): MethodBody =
+    copy(codeFragment = codeFragment.replaceBytecode(l, cf))
 
-  def pretty: String = {
-    val lName = Bytecode.Label.namer("L", "")
-    s"""${
-      bytecode.map { bc =>
-        val l = f"L${bc.label.innerId}%-5s "
-        l + (bc match {
-          case j: Bytecode.Jump =>
-            s"${j} # L${jumpTargets(j.target).innerId}"
-          case b: Bytecode.Branch =>
-            s"${b} # L${jumpTargets(b.target).innerId}"
-          case b =>
-            b.pretty
-        })
-      }.mkString("\n")
-    }
-"""
-  }
+  def pretty: String =
+    s"""$descriptor [$attribute]
+    ${codeFragment.pretty}"""
 
   def dataflow(self: Instance[_ <: AnyRef]): DataFlow =
     new DataFlow(this, Data.Reference(self.thisRef.toTypeRef, self))
