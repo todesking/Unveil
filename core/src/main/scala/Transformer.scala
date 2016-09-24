@@ -116,9 +116,9 @@ object Transformer {
                     .map {
                       case ((cr, mr), df) =>
                         methodRenaming(cr -> mr) -> df.body.rewrite {
-                          case bc: Bytecode.InvokeInstanceMethod if df.mustThis(bc.objectref) =>
+                          case (_, bc: Bytecode.InvokeInstanceMethod) if df.mustThis(bc.objectref) =>
                             Bytecode.invokespecial(self.thisRef, methodRenaming(bc.classRef, bc.methodRef))
-                          case bc: Bytecode.InstanceFieldAccess if df.mustThis(bc.objectref) =>
+                          case (_, bc: Bytecode.InstanceFieldAccess) if df.mustThis(bc.objectref) =>
                             bc.rewriteFieldRef(self.thisRef, fieldRenaming(bc.classRef, bc.fieldRef))
                         }.makePrivate
                     }
@@ -130,11 +130,11 @@ object Transformer {
                         import Bytecode._
                         val memberAccessOnly =
                           df.body.bytecode
-                            .filter { bc => bc.inputs.exists { i => df.mustInstance(i, fieldInstance) } }
+                            .filter { case (_, bc) => bc.inputs.exists { i => df.mustInstance(i, fieldInstance) } }
                             .forall {
-                              case bc @ getfield(_, _) => true
-                              case bc: InvokeInstanceMethod if !bc.args.exists { a => df.mustInstance(a, fieldInstance) } => true
-                              case bc => false
+                              case (_, bc @ getfield(_, _)) => true
+                              case (_, bc: InvokeInstanceMethod) if !bc.args.exists { a => df.mustInstance(a, fieldInstance) } => true
+                              case (_, bc) => false
                             }
                         if (!memberAccessOnly) {
                           el.log(s"[SKIP] the field is leaked in method $mr")
@@ -142,15 +142,15 @@ object Transformer {
                         } else {
                           // TODO: use df.mustFieldRef instead of df.mustInstance when rewriting
                           mr -> df.body.rewrite {
-                            case bc @ getfield(cr1, fr1) if df.mustThis(bc.objectref) && self.resolveField(cr1, fr1) == cr && fr1 == fr =>
+                            case (_, bc @ getfield(cr1, fr1)) if df.mustThis(bc.objectref) && self.resolveField(cr1, fr1) == cr && fr1 == fr =>
                               nop()
-                            case bc: InvokeInstanceMethod if df.mustInstance(bc.objectref, fieldInstance) =>
+                            case (_, bc: InvokeInstanceMethod) if df.mustInstance(bc.objectref, fieldInstance) =>
                               methodRenaming.get(fieldInstance.resolveVirtualMethod(bc.methodRef) -> bc.methodRef).fold {
                                 throw new AssertionError(s"Can't find renamed method for ${bc.classRef}.${bc.methodRef}")
                               } { mr =>
                                 invokespecial(self.thisRef, mr)
                               }
-                            case bc: InstanceFieldAccess if df.mustInstance(bc.objectref, fieldInstance) =>
+                            case (_, bc: InstanceFieldAccess) if df.mustInstance(bc.objectref, fieldInstance) =>
                               fieldRenaming.get(fieldInstance.resolveField(bc.classRef, bc.fieldRef) -> bc.fieldRef).fold(bc) {
                                 case fr =>
                                   bc.rewriteFieldRef(self.thisRef, fr)
@@ -193,7 +193,7 @@ object Transformer {
       var localOffset = df.maxLocals
       import Bytecode._
       df.body.rewrite_* {
-        case bc: InvokeInstanceMethod if df.mustThis(bc.objectref) =>
+        case (_, bc: InvokeInstanceMethod) if df.mustThis(bc.objectref) =>
           el.section(s"Inline invocation of ${bc.classRef}.${bc.methodRef}") { el =>
             val mr = bc.methodRef
             val cr =
@@ -215,13 +215,13 @@ object Transformer {
             // TODO: support exception
             val cf =
               calleeDf.body.rewrite_* {
-                case bc: LocalAccess =>
+                case (_, bc: LocalAccess) =>
                   CodeFragment.bytecode(bc.rewriteLocalIndex(bc.localIndex + localOffset))
-                case bc: XReturn =>
+                case (label, bc: XReturn) =>
                   val resultLocal = localOffset + calleeDf.maxLocals
-                  CodeFragment(
+                  new CodeFragment(
                     Seq(store(bc.returnType, resultLocal)) ++ (
-                      calleeDf.beforeFrames(bc.label).stack.drop(bc.returnType.wordSize).map {
+                      calleeDf.beforeFrames(label).stack.drop(bc.returnType.wordSize).map {
                         case FrameItem(l, d) =>
                           autoPop(d.typeRef)
                       }
@@ -229,9 +229,9 @@ object Transformer {
                         load(bc.returnType, resultLocal)
                       )
                   )
-                case bc: VoidReturn =>
-                  CodeFragment(
-                    calleeDf.beforeFrames(bc.label).stack.map {
+                case (label, bc: VoidReturn) =>
+                  new CodeFragment(
+                    calleeDf.beforeFrames(label).stack.map {
                       case FrameItem(l, d) =>
                         autoPop(d.typeRef)
                     }

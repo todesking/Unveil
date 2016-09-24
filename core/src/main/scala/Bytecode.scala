@@ -13,22 +13,22 @@ sealed abstract class Bytecode {
   type Self <: Bytecode
   protected final def self: Self = this.asInstanceOf[Self] // :(
 
-  val label: Bytecode.Label = Bytecode.Label.fresh()
-
   def inputs: Seq[DataLabel.In]
   def output: Option[DataLabel.Out]
   def effect: Option[Effect]
-  def nextFrame(frame: Frame): FrameUpdate
+  def nextFrame(label: Bytecode.Label, frame: Frame): FrameUpdate
   def pretty: String = toString
-  def fresh(): Self
 
-  protected def update(frame: Frame): FrameUpdate =
-    new FrameUpdate(this, frame)
+  protected def update(label: Bytecode.Label, frame: Frame): FrameUpdate =
+    new FrameUpdate(label, this, frame)
 }
 object Bytecode {
-  class Label extends AbstractLabel
-  object Label extends AbstractLabel.NamerProvider[Label] {
-    def fresh(): Label = new Label
+  case class Label(index: Int) {
+    def format(f: String): String =
+      f.format(index)
+
+    def offset(n: Int): Label =
+      Label(index + n)
   }
 
   // TODO[refactor]: rename load, store, etc to autoXxx
@@ -116,7 +116,7 @@ object Bytecode {
   sealed abstract class Jump extends Control with HasAJumpTarget {
     override final def inputs = Seq.empty
     override final def output = None
-    override final def nextFrame(f: Frame) = update(f)
+    override final def nextFrame(l: Bytecode.Label, f: Frame) = update(l, f)
   }
   sealed abstract class Branch extends Control with HasAJumpTarget with FallThrough
   sealed abstract class Exit extends Control
@@ -127,14 +127,14 @@ object Bytecode {
     val in: DataLabel.In = DataLabel.in("retval")
     override final val inputs = Seq(in)
     override final def output = None
-    override final def nextFrame(f: Frame) = update(f).ret(in)
+    override final def nextFrame(l: Bytecode.Label, f: Frame) = update(l, f).ret(in)
     def returnType: TypeRef.Public
   }
   // Void return
   sealed abstract class VoidReturn extends Return {
     override def inputs = Seq.empty
     override def output = None
-    override def nextFrame(f: Frame) = update(f)
+    override def nextFrame(l: Bytecode.Label, f: Frame) = update(l, f)
   }
 
   sealed abstract class if_X1cmpXX extends Branch {
@@ -142,7 +142,7 @@ object Bytecode {
     val value2: DataLabel.In = DataLabel.in("value2")
     override def inputs = Seq(value1, value2)
     override def output = None
-    override def nextFrame(f: Frame) = update(f).pop1(value2).pop1(value1)
+    override def nextFrame(l: Bytecode.Label, f: Frame) = update(l, f).pop1(value2).pop1(value1)
   }
 
   sealed abstract class LocalAccess extends Shuffle {
@@ -152,18 +152,20 @@ object Bytecode {
   }
 
   sealed abstract class Load1 extends LocalAccess {
-    override def nextFrame(f: Frame) = update(f).load1(localIndex)
+    override def nextFrame(l: Bytecode.Label, f: Frame) = update(l, f).load1(localIndex)
   }
   sealed abstract class Load2 extends LocalAccess {
-    override def nextFrame(f: Frame) = update(f).load2(localIndex)
+    override def nextFrame(l: Bytecode.Label, f: Frame) = update(l, f).load2(localIndex)
   }
 
   sealed abstract class Store1 extends LocalAccess {
-    override def nextFrame(f: Frame) = update(f).store1(localIndex)
+    def storeType: TypeRef.SingleWord
+    override def nextFrame(l: Bytecode.Label, f: Frame) = update(l, f).store1(storeType, localIndex)
   }
 
   sealed abstract class Store2 extends LocalAccess {
-    override def nextFrame(f: Frame) = update(f).store2(localIndex)
+    def storeType: TypeRef.DoubleWord
+    override def nextFrame(l: Bytecode.Label, f: Frame) = update(l, f).store2(storeType, localIndex)
   }
 
   sealed abstract class ConstX extends Procedure {
@@ -176,12 +178,12 @@ object Bytecode {
 
   sealed abstract class Const1 extends ConstX {
     final val out: DataLabel.Out = DataLabel.out("const(1word)")
-    override def nextFrame(f: Frame) = update(f).push1(FrameItem(out, data))
+    override def nextFrame(l: Bytecode.Label, f: Frame) = update(l, f).push1(FrameItem(out, data))
   }
 
   sealed abstract class Const2 extends ConstX {
     final val out: DataLabel.Out = DataLabel.out("const(2word)")
-    override def nextFrame(f: Frame) = update(f).push2(FrameItem(out, data))
+    override def nextFrame(l: Bytecode.Label, f: Frame) = update(l, f).push2(FrameItem(out, data))
   }
 
   sealed abstract class InvokeMethod extends Procedure with HasClassRef with HasMethodRef with HasEffect {
@@ -193,10 +195,10 @@ object Bytecode {
   sealed abstract class InvokeClassMethod extends InvokeMethod {
     override type Self <: InvokeClassMethod
     override final def inputs = args
-    override def nextFrame(f: Frame) = {
+    override def nextFrame(l: Bytecode.Label, f: Frame) = {
       require(f.stack.size >= methodRef.args.size)
       val popped =
-        args.zip(methodRef.args).foldRight(update(f)) {
+        args.zip(methodRef.args).foldRight(update(l, f)) {
           case ((a, t), u) =>
             if (t.isDoubleWord) u.pop2(a)
             else u.pop1(a)
@@ -208,10 +210,10 @@ object Bytecode {
     override type Self <: InvokeInstanceMethod
     val objectref: DataLabel.In = DataLabel.in("objectref")
     override final def inputs = objectref +: args
-    override def nextFrame(f: Frame) = {
+    override def nextFrame(l: Bytecode.Label, f: Frame) = {
       require(f.stack.size >= methodRef.args.size)
       val popped =
-        args.zip(methodRef.args).foldRight(update(f)) {
+        args.zip(methodRef.args).foldRight(update(l, f)) {
           case ((a, t), u) =>
             if (t.isDoubleWord) u.pop2(a)
             else u.pop1(a)
@@ -233,139 +235,115 @@ object Bytecode {
 
   case class nop() extends Shuffle {
     override type Self = nop
-    override def fresh() = copy()
-    override def nextFrame(f: Frame) = update(f)
+    override def nextFrame(l: Bytecode.Label, f: Frame) = update(l, f)
   }
   case class dup() extends Shuffle {
     override type Self = dup
-    override def fresh() = copy()
-    override def nextFrame(f: Frame) = update(f).push(f.stack.head)
+    override def nextFrame(l: Bytecode.Label, f: Frame) = update(l, f).push(f.stack.head)
   }
   case class pop() extends Shuffle {
     override type Self = pop
-    override def fresh() = copy()
-    override def nextFrame(f: Frame) = update(f).pop1()
+    override def nextFrame(l: Bytecode.Label, f: Frame) = update(l, f).pop1()
   }
   case class pop2() extends Shuffle {
     override type Self = pop2
-    override def fresh() = copy()
-    override def nextFrame(f: Frame) = update(f).pop2()
+    override def nextFrame(l: Bytecode.Label, f: Frame) = update(l, f).pop2()
   }
   case class vreturn() extends VoidReturn {
     override type Self = vreturn
-    override def fresh() = copy()
   }
   case class iload(override val localIndex: Int) extends Load1 {
     override type Self = iload
-    override def fresh() = copy()
     override def rewriteLocalIndex(m: Int) = if (localIndex == m) self else iload(m)
   }
   case class aload(override val localIndex: Int) extends Load1 {
     override type Self = aload
-    override def fresh() = copy()
     override def rewriteLocalIndex(m: Int) = if (localIndex == m) self else aload(m)
   }
   case class fload(override val localIndex: Int) extends Load1 {
     override type Self = fload
-    override def fresh() = copy()
     override def rewriteLocalIndex(m: Int) = if (localIndex == m) self else fload(m)
   }
   case class dload(override val localIndex: Int) extends Load2 {
     override type Self = dload
-    override def fresh() = copy()
     override def rewriteLocalIndex(m: Int) = if (localIndex == m) self else dload(m)
   }
   case class lload(override val localIndex: Int) extends Load2 {
     override type Self = lload
-    override def fresh() = copy()
     override def rewriteLocalIndex(m: Int) = if (localIndex == m) self else lload(m)
   }
   case class istore(override val localIndex: Int) extends Store1 {
     override type Self = istore
-    override def fresh() = copy()
+    override def storeType = TypeRef.Int
     override def rewriteLocalIndex(m: Int) = if (localIndex == m) self else istore(m)
   }
   case class astore(override val localIndex: Int) extends Store1 {
     override type Self = astore
-    override def fresh() = copy()
+    override def storeType = TypeRef.Object
     override def rewriteLocalIndex(m: Int) = if (localIndex == m) self else astore(m)
   }
   case class dstore(override val localIndex: Int) extends Store2 {
     override type Self = dstore
-    override def fresh() = copy()
+    override def storeType = TypeRef.Double
     override def rewriteLocalIndex(m: Int) = if (localIndex == m) self else dstore(m)
   }
 
   case class ireturn() extends XReturn {
     override type Self = ireturn
-    override def fresh() = copy()
     override def returnType = TypeRef.Int
   }
   case class freturn() extends XReturn {
     override type Self = freturn
-    override def fresh() = copy()
     override def returnType = TypeRef.Float
   }
   case class dreturn() extends XReturn {
     override type Self = dreturn
-    override def fresh() = copy()
     override def returnType = TypeRef.Double
   }
   case class lreturn() extends XReturn {
     override type Self = lreturn
-    override def fresh() = copy()
     override def returnType = TypeRef.Long
   }
   case class areturn() extends XReturn {
     override type Self = areturn
-    override def fresh() = copy()
     override def returnType = TypeRef.Reference(ClassRef.Object)
     def objectref: DataLabel.In = in
   }
   case class iconst(value: Int) extends Const1 {
     override type Self = iconst
-    override def fresh() = copy()
     override def data = Data.Primitive(TypeRef.Int, value)
   }
   case class lconst(value: Long) extends Const2 {
     override type Self = lconst
-    override def fresh() = copy()
     override def data = Data.Primitive(TypeRef.Long, value)
   }
   case class aconst_null() extends Const1 {
     override type Self = aconst_null
-    override def fresh() = copy()
     override def data = Data.Null
   }
   case class ldc2_double(value: Double) extends Const2 {
     override type Self = ldc2_double
-    override def fresh() = copy()
     override def data = Data.Primitive(TypeRef.Double, value)
   }
   case class goto(override val jumpTarget: JumpTarget) extends Jump {
     override type Self = goto
-    override def fresh() = copy(jumpTarget = JumpTarget.fresh())
   }
   case class if_icmple(override val jumpTarget: JumpTarget) extends if_X1cmpXX {
     override type Self = if_icmple
-    override def fresh() = copy(jumpTarget = JumpTarget.fresh())
   }
   case class if_icmpge(override val jumpTarget: JumpTarget) extends if_X1cmpXX {
     override type Self = if_icmpge
-    override def fresh() = copy(jumpTarget = JumpTarget.fresh())
   }
   case class if_acmpne(override val jumpTarget: JumpTarget) extends if_X1cmpXX {
     override type Self = if_acmpne
-    override def fresh() = copy(jumpTarget = JumpTarget.fresh())
   }
   case class ifnonnull(override val jumpTarget: JumpTarget) extends Branch {
     override type Self = ifnonnull
-    override def fresh() = copy(jumpTarget = JumpTarget.fresh())
     val value: DataLabel.In = DataLabel.in("value")
     override def pretty = "ifnonnull"
     override def inputs = Seq(value)
     override def output = None
-    override def nextFrame(f: Frame) = update(f).pop1(value)
+    override def nextFrame(l: Bytecode.Label, f: Frame) = update(l, f).pop1(value)
   }
   sealed abstract class PrimitiveBinOp[A <: AnyVal] extends Procedure {
     val value1 = DataLabel.in("value1")
@@ -378,10 +356,10 @@ object Bytecode {
     override def inputs = Seq(value1, value2)
     override def output = Some(result)
     override def effect = None
-    override def nextFrame(f: Frame) =
+    override def nextFrame(l: Bytecode.Label, f: Frame) =
       (f.stack(0), f.stack(operandType.wordSize)) match {
         case (d1, d2) if d1.data.typeRef == operandType && d2.data.typeRef == operandType =>
-          update(f)
+          update(l, f)
             .pop(operandType, value2)
             .pop(operandType, value1)
             .push(
@@ -412,8 +390,8 @@ object Bytecode {
     def resultType: TypeRef.Primitive
     def op(value: A): B
 
-    override def nextFrame(f: Frame) = {
-      update(f)
+    override def nextFrame(l: Bytecode.Label, f: Frame) = {
+      update(l, f)
         .pop(operandType)
         .push(
           FrameItem(
@@ -427,85 +405,72 @@ object Bytecode {
   }
   case class iadd() extends PrimitiveBinOp[Int] {
     override type Self = iadd
-    override def fresh() = copy()
     override def operandType = TypeRef.Int
     override def op(value1: Int, value2: Int) = value1 + value2
   }
   case class dadd() extends PrimitiveBinOp[Double] {
     override type Self = dadd
-    override def fresh() = copy()
     override def operandType = TypeRef.Double
     override def op(value1: Double, value2: Double) = value1 + value2
   }
   case class isub() extends PrimitiveBinOp[Int] {
     override type Self = isub
-    override def fresh() = copy()
     override def operandType = TypeRef.Int
     override def op(value1: Int, value2: Int) = value1 - value2
   }
   case class dsub() extends PrimitiveBinOp[Double] {
     override type Self = dsub
-    override def fresh() = copy()
     override def operandType = TypeRef.Double
     override def op(value1: Double, value2: Double) = value1 - value2
   }
   case class dmul() extends PrimitiveBinOp[Double] {
     override type Self = dmul
-    override def fresh() = copy()
     override def operandType = TypeRef.Double
     override def op(value1: Double, value2: Double) = value1 * value2
   }
   case class imul() extends PrimitiveBinOp[Int] {
     override type Self = imul
-    override def fresh() = copy()
     override def operandType = TypeRef.Int
     override def op(value1: Int, value2: Int) = value1 * value2
   }
   case class d2i() extends PrimitiveUniOp[Double, Int] {
     override type Self = d2i
-    override def fresh() = copy()
     override def operandType = TypeRef.Double
     override def resultType = TypeRef.Int
     override def op(value: Double) = value.toInt
   }
   case class i2d() extends PrimitiveUniOp[Int, Double] {
     override type Self = i2d
-    override def fresh() = copy()
     override def operandType = TypeRef.Int
     override def resultType = TypeRef.Double
     override def op(value: Int) = value.toDouble
   }
   case class invokevirtual(override val classRef: ClassRef, override val methodRef: MethodRef) extends InvokeInstanceMethod {
     override type Self = invokevirtual
-    override def fresh() = copy()
     override def withNewClassRef(newRef: ClassRef) = copy(classRef = newRef)
     override def withNewMehtodRef(newRef: MethodRef) = copy(methodRef = newRef)
     override def pretty = s"invokevirtual ${classRef.pretty}.${methodRef.str}"
   }
   case class invokeinterface(override val classRef: ClassRef, override val methodRef: MethodRef, count: Int) extends InvokeInstanceMethod {
     override type Self = invokeinterface
-    override def fresh() = copy()
     override def withNewClassRef(newRef: ClassRef) = copy(classRef = newRef)
     override def withNewMehtodRef(newRef: MethodRef) = copy(methodRef = newRef)
     override def pretty = s"invokeinterface ${classRef.pretty}.${methodRef.str}"
   }
   case class invokespecial(override val classRef: ClassRef, override val methodRef: MethodRef) extends InvokeInstanceMethod {
     override type Self = invokespecial
-    override def fresh() = copy()
     override def withNewClassRef(newRef: ClassRef) = copy(classRef = newRef)
     override def withNewMehtodRef(newRef: MethodRef) = copy(methodRef = newRef)
     override def pretty = s"invokespecial ${classRef.pretty}.${methodRef.str}"
   }
   case class invokestatic(override val classRef: ClassRef, override val methodRef: MethodRef) extends InvokeClassMethod {
     override type Self = invokestatic
-    override def fresh() = copy()
     override def withNewClassRef(newRef: ClassRef) = copy(classRef = newRef)
     override def withNewMehtodRef(newRef: MethodRef) = copy(methodRef = newRef)
     override def pretty = s"invokestatic ${classRef.pretty}.${methodRef.str}"
   }
   case class getfield(override val classRef: ClassRef, override val fieldRef: FieldRef) extends InstanceFieldAccess {
     override type Self = getfield
-    override def fresh() = copy()
     override def withNewClassRef(newRef: ClassRef) = copy(classRef = newRef)
     override def withNewFieldRef(newRef: FieldRef) = copy(fieldRef = newRef)
 
@@ -513,7 +478,7 @@ object Bytecode {
     override def pretty = s"getfield ${classRef}.${fieldRef}"
     override def inputs = Seq(objectref)
     override def output = Some(out)
-    override def nextFrame(f: Frame) = {
+    override def nextFrame(l: Bytecode.Label, f: Frame) = {
       val self = f.stack(0).data
       val data =
         self match {
@@ -524,12 +489,11 @@ object Bytecode {
           case _ =>
             Data.Unsure(fieldRef.descriptor.typeRef)
         }
-      update(f).pop1(objectref).push(FrameItem(out, data))
+      update(l, f).pop1(objectref).push(FrameItem(out, data))
     }
   }
   case class getstatic(override val classRef: ClassRef, override val fieldRef: FieldRef) extends StaticFieldAccess {
     override type Self = getstatic
-    override def fresh() = copy()
     override def withNewClassRef(newRef: ClassRef) = copy(classRef = newRef)
     override def withNewFieldRef(newRef: FieldRef) = copy(fieldRef = newRef)
 
@@ -537,42 +501,39 @@ object Bytecode {
     override def pretty = s"getstatic ${fieldRef}"
     override def inputs = Seq.empty
     override def output = Some(out)
-    override def nextFrame(f: Frame) = {
+    override def nextFrame(l: Bytecode.Label, f: Frame) = {
       val data = Data.Unsure(fieldRef.descriptor.typeRef) // TODO: set static field value if it is final
-      update(f).push(FrameItem(out, data))
+      update(l, f).push(FrameItem(out, data))
     }
   }
   case class putfield(override val classRef: ClassRef, override val fieldRef: FieldRef) extends InstanceFieldAccess {
     override type Self = putfield
-    override def fresh() = copy()
     override def withNewClassRef(newRef: ClassRef) = copy(classRef = newRef)
     override def withNewFieldRef(newRef: FieldRef) = copy(fieldRef = newRef)
     val value = DataLabel.in("value")
     override def pretty = s"putfield ${classRef}.${fieldRef}"
     override def inputs = Seq(objectref)
     override def output = None
-    override def nextFrame(f: Frame) =
-      update(f).pop(fieldRef.descriptor.typeRef, value).pop1(objectref)
+    override def nextFrame(l: Bytecode.Label, f: Frame) =
+      update(l, f).pop(fieldRef.descriptor.typeRef, value).pop1(objectref)
   }
   case class athrow() extends Throw {
     override type Self = athrow
-    override def fresh() = copy()
     val objectref = DataLabel.in("objectref")
     override def pretty = s"athrow"
     override def inputs = Seq(objectref)
     override def output = None
-    override def nextFrame(f: Frame) =
-      update(f).athrow(objectref)
+    override def nextFrame(l: Bytecode.Label, f: Frame) =
+      update(l, f).athrow(objectref)
   }
   case class new_(override val classRef: ClassRef) extends Procedure with HasClassRef {
     val objectref = DataLabel.out("new")
     override type Self = new_
-    override def fresh() = copy()
     override def withNewClassRef(cr: ClassRef) = copy(classRef = cr)
     override def inputs = Seq()
     override def output = Some(objectref)
     override def effect = None
-    override def nextFrame(f: Frame) =
-      update(f).push(FrameItem(objectref, Data.Unsure(TypeRef.Reference(classRef))))
+    override def nextFrame(l: Bytecode.Label, f: Frame) =
+      update(l, f).push(FrameItem(objectref, Data.Unsure(TypeRef.Reference(classRef))))
   }
 }

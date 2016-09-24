@@ -22,117 +22,120 @@ object Javassist {
     val ctObject = classPool.get("java.lang.Object")
     val out = new JABytecode(constPool, 0, 0)
     val jumps = mutable.HashMap.empty[Int, (Int, JumpTarget)] // jump operand address -> (insn addr -> target)
-    val addrs = mutable.HashMap.empty[Bytecode.Label, Int]
+    val label2addr = mutable.HashMap.empty[Bytecode.Label, Int]
+    val addr2label = mutable.HashMap.empty[Int, Bytecode.Label]
     import Bytecode._
-    body.bytecode foreach { bc =>
-      addrs(bc.label) = out.getSize
-      bc match {
-        case nop() =>
-          out.add(0x00)
-        case aconst_null() =>
-          out.addConstZero(ctObject)
-        case vreturn() =>
-          out.addReturn(null)
-        case ireturn() =>
-          out.addReturn(CtClass.intType)
-        case lreturn() =>
-          out.addReturn(CtClass.longType)
-        case areturn() =>
-          out.add(0xB0)
-        case freturn() =>
-          out.add(0xAE)
-        case dreturn() =>
-          out.add(0xAF)
-        case iload(n) =>
-          out.addIload(n)
-        case aload(n) =>
-          out.addAload(n)
-        case fload(n) =>
-          out.addFload(n)
-        case dload(n) =>
-          out.addDload(n)
-        case lload(n) =>
-          out.addLload(n)
-        case istore(n) =>
-          out.addIstore(n)
-        case astore(n) =>
-          out.addAstore(n)
-        case dstore(n) =>
-          out.addDstore(n)
-        case iconst(c) =>
-          out.addIconst(c)
-        case lconst(c) =>
-          out.addLconst(c)
-        case goto(target) =>
-          out.add(0xA7)
-          jumps(out.getSize) = (out.getSize - 1) -> target
-          out.add(0x00, 0x03)
-        case dup() =>
-          out.add(0x59)
-        case ldc2_double(value) =>
-          out.addLdc2w(value)
-        case pop() =>
-          out.add(0x57)
-        case pop2() =>
-          out.add(0x58)
-        case iadd() =>
-          out.add(0x60)
-        case dadd() =>
-          out.add(0x63)
-        case dsub() =>
-          out.add(0x67)
-        case imul() =>
-          out.add(0x68)
-        case isub() =>
-          out.add(0x64)
-        case dmul() =>
-          out.add(0x6B)
-        case i2d() =>
-          out.add(0x87)
-        case d2i() =>
-          out.add(0x8E)
-        case if_acmpne(target) =>
-          out.add(0xA6)
-          jumps(out.getSize) = (out.getSize - 1) -> target
-          out.add(0x00, 0x03)
-        case invokevirtual(classRef, methodRef) =>
-          // TODO: check resolved class
-          out.addInvokevirtual(classRef.binaryName, methodRef.name, methodRef.descriptor.str)
-        case invokespecial(classRef, methodRef) =>
-          // TODO: check resolved class
-          out.addInvokespecial(classRef.binaryName, methodRef.name, methodRef.descriptor.str)
-        case invokestatic(classRef, methodRef) =>
-          out.addInvokestatic(classRef.binaryName, methodRef.name, methodRef.descriptor.str)
-        case invokeinterface(classRef, methodRef, count) =>
-          out.addInvokeinterface(classRef.binaryName, methodRef.name, methodRef.descriptor.str, count)
-        case if_icmpge(target) =>
-          out.add(0xA2)
-          jumps(out.getSize) = (out.getSize - 1) -> target
-          out.add(0x00, 0x03)
-        case if_icmple(target) =>
-          out.add(0xA4)
-          jumps(out.getSize) = (out.getSize - 1) -> target
-          out.add(0x00, 0x03)
-        case ifnonnull(target) =>
-          out.add(0xC7)
-          jumps(out.getSize) = (out.getSize - 1) -> target
-          out.add(0x00, 0x03)
-        case athrow() =>
-          out.add(0xBF)
-        case getfield(classRef, fieldRef) =>
-          out.addGetfield(classRef.binaryName, fieldRef.name, fieldRef.descriptor.str)
-        case getstatic(classRef, fieldRef) =>
-          out.addGetstatic(classRef.binaryName, fieldRef.name, fieldRef.descriptor.str)
-        case putfield(classRef, fieldRef) =>
-          out.addPutfield(classRef.binaryName, fieldRef.name, fieldRef.descriptor.str)
-        case new_(classRef) =>
-          out.addNew(classRef.binaryName)
-      }
+    body.bytecode foreach {
+      case (label, bc) =>
+        label2addr(label) = out.getSize
+        addr2label(out.getSize) = label
+        bc match {
+          case nop() =>
+            out.add(0x00)
+          case aconst_null() =>
+            out.addConstZero(ctObject)
+          case vreturn() =>
+            out.addReturn(null)
+          case ireturn() =>
+            out.addReturn(CtClass.intType)
+          case lreturn() =>
+            out.addReturn(CtClass.longType)
+          case areturn() =>
+            out.add(0xB0)
+          case freturn() =>
+            out.add(0xAE)
+          case dreturn() =>
+            out.add(0xAF)
+          case iload(n) =>
+            out.addIload(n)
+          case aload(n) =>
+            out.addAload(n)
+          case fload(n) =>
+            out.addFload(n)
+          case dload(n) =>
+            out.addDload(n)
+          case lload(n) =>
+            out.addLload(n)
+          case istore(n) =>
+            out.addIstore(n)
+          case astore(n) =>
+            out.addAstore(n)
+          case dstore(n) =>
+            out.addDstore(n)
+          case iconst(c) =>
+            out.addIconst(c)
+          case lconst(c) =>
+            out.addLconst(c)
+          case goto(target) =>
+            out.add(0xA7)
+            jumps(out.getSize) = (out.getSize - 1) -> target
+            out.add(0x00, 0x03)
+          case dup() =>
+            out.add(0x59)
+          case ldc2_double(value) =>
+            out.addLdc2w(value)
+          case pop() =>
+            out.add(0x57)
+          case pop2() =>
+            out.add(0x58)
+          case iadd() =>
+            out.add(0x60)
+          case dadd() =>
+            out.add(0x63)
+          case dsub() =>
+            out.add(0x67)
+          case imul() =>
+            out.add(0x68)
+          case isub() =>
+            out.add(0x64)
+          case dmul() =>
+            out.add(0x6B)
+          case i2d() =>
+            out.add(0x87)
+          case d2i() =>
+            out.add(0x8E)
+          case if_acmpne(target) =>
+            out.add(0xA6)
+            jumps(out.getSize) = (out.getSize - 1) -> target
+            out.add(0x00, 0x03)
+          case invokevirtual(classRef, methodRef) =>
+            // TODO: check resolved class
+            out.addInvokevirtual(classRef.binaryName, methodRef.name, methodRef.descriptor.str)
+          case invokespecial(classRef, methodRef) =>
+            // TODO: check resolved class
+            out.addInvokespecial(classRef.binaryName, methodRef.name, methodRef.descriptor.str)
+          case invokestatic(classRef, methodRef) =>
+            out.addInvokestatic(classRef.binaryName, methodRef.name, methodRef.descriptor.str)
+          case invokeinterface(classRef, methodRef, count) =>
+            out.addInvokeinterface(classRef.binaryName, methodRef.name, methodRef.descriptor.str, count)
+          case if_icmpge(target) =>
+            out.add(0xA2)
+            jumps(out.getSize) = (out.getSize - 1) -> target
+            out.add(0x00, 0x03)
+          case if_icmple(target) =>
+            out.add(0xA4)
+            jumps(out.getSize) = (out.getSize - 1) -> target
+            out.add(0x00, 0x03)
+          case ifnonnull(target) =>
+            out.add(0xC7)
+            jumps(out.getSize) = (out.getSize - 1) -> target
+            out.add(0x00, 0x03)
+          case athrow() =>
+            out.add(0xBF)
+          case getfield(classRef, fieldRef) =>
+            out.addGetfield(classRef.binaryName, fieldRef.name, fieldRef.descriptor.str)
+          case getstatic(classRef, fieldRef) =>
+            out.addGetstatic(classRef.binaryName, fieldRef.name, fieldRef.descriptor.str)
+          case putfield(classRef, fieldRef) =>
+            out.addPutfield(classRef.binaryName, fieldRef.name, fieldRef.descriptor.str)
+          case new_(classRef) =>
+            out.addNew(classRef.binaryName)
+        }
     }
     jumps foreach {
       case (dataIndex, (index, target)) =>
-        val label = body.jumpTargets(target)
-        val targetIndex = addrs(label)
+        val label = body.jumpTargets(addr2label(index) -> target)
+        val targetIndex = label2addr(label)
         out.write16bit(dataIndex, targetIndex - index)
     }
     out.setMaxLocals(df.maxLocals)
@@ -221,12 +224,13 @@ object Javassist {
       val it = codeAttribute.iterator
       val cpool = ctMethod.getDeclaringClass.getClassFile.getConstPool
       val bcs = mutable.ArrayBuffer.empty[Bytecode]
-      val jumpTargets = mutable.HashMap.empty[JumpTarget, Bytecode.Label]
-      val addr2jt = JumpTarget.assigner[Int]()
+      val addr2label = mutable.HashMap.empty[Int, Bytecode.Label]
+      val jumps = mutable.HashMap.empty[(Bytecode.Label, JumpTarget), Int]
 
       def onInstruction(index: Int, bc: Bytecode): Unit = {
+        val label = Bytecode.Label(bcs.size)
+        addr2label(index) = label
         bcs += bc
-        jumpTargets(addr2jt(index)) = bc.label
       }
 
       while (it.hasNext) {
@@ -344,17 +348,23 @@ object Javassist {
             onInstruction(index, d2i())
 
           case 0xA2 => // if_icmpge
-            onInstruction(index, if_icmpge(addr2jt(index + it.s16bitAt(index + 1))))
+            val jt = JumpTarget("branch")
+            onInstruction(index, if_icmpge(jt))
+            jumps(addr2label(index) -> jt) = index + it.s16bitAt(index + 1)
+
           case 0xA4 => // if_icmple
-            onInstruction(
-              index,
-              if_icmple(addr2jt(index + it.s16bitAt(index + 1)))
-            )
+            val jt = JumpTarget("branch")
+            onInstruction(index, if_icmple(jt))
+            jumps(addr2label(index) -> jt) = index + it.s16bitAt(index + 1)
 
           case 0xA6 => // if_acmpne
-            onInstruction(index, if_acmpne(addr2jt(index + it.s16bitAt(index + 1))))
+            val jt = JumpTarget("branch")
+            onInstruction(index, if_acmpne(jt))
+            jumps(addr2label(index) -> jt) = index + it.s16bitAt(index + 1)
           case 0xA7 => // goto
-            onInstruction(index, goto(addr2jt(index + it.s16bitAt(index + 1))))
+            val jt = JumpTarget("branch")
+            onInstruction(index, goto(jt))
+            jumps(addr2label(index) -> jt) = index + it.s16bitAt(index + 1)
 
           case 0xAC => // ireturn
             onInstruction(index, ireturn())
@@ -463,16 +473,20 @@ object Javassist {
             onInstruction(index, athrow())
 
           case 0xC7 => // ifnonnull
-            onInstruction(index, ifnonnull(addr2jt(index + it.s16bitAt(index + 1))))
+            val jt = JumpTarget("branch")
+            onInstruction(index, ifnonnull(jt))
+            jumps(addr2label(index) -> jt) = index + it.s16bitAt(index + 1)
 
           case unk =>
             throw new UnsupportedOpcodeException(ClassRef.of(jClass), mRef, unk)
         }
       }
+      val jumpTargets: Map[(Bytecode.Label, JumpTarget), Bytecode.Label] =
+        jumps.map { case ((l, jt), index) => (l -> jt) -> addr2label(index) }.toMap
       Some(MethodBody(
         mRef.descriptor,
         MethodAttribute.from(ctMethod.getModifiers),
-        CodeFragment(bcs.toSeq, jumpTargets.toMap)
+        new CodeFragment(bcs.toSeq, jumpTargets)
       ))
     }
   }

@@ -18,10 +18,10 @@ case class MethodBody(
   private[this] def require(cond: Boolean, detail: => String = ""): Unit =
     MethodBody.require(this, cond, detail)
 
-  def jumpTargets: Map[JumpTarget, Bytecode.Label] =
+  def jumpTargets: Map[(Bytecode.Label, JumpTarget), Bytecode.Label] =
     codeFragment.jumpTargets
 
-  def bytecode: Seq[Bytecode] =
+  def bytecode: Seq[(Bytecode.Label, Bytecode)] =
     codeFragment.bytecode
 
   def isStatic: Boolean = attribute.isStatic
@@ -43,37 +43,31 @@ case class MethodBody(
   def labelToBytecode: Map[Bytecode.Label, Bytecode] =
     codeFragment.labelToBytecode
 
-  def rewrite(f: PartialFunction[Bytecode, Bytecode]): MethodBody = {
+  def rewrite(f: PartialFunction[(Bytecode.Label, Bytecode), Bytecode]): MethodBody = {
     val lifted = f.lift
     rewrite_* {
-      case bc if f.isDefinedAt(bc) => CodeFragment.bytecode(f(bc))
+      case x @ (label, bc) if f.isDefinedAt(x) => CodeFragment.bytecode(f(x))
     }
   }
 
-  def rewrite_*(f: PartialFunction[Bytecode, CodeFragment]): MethodBody = {
+  def rewrite_*(f: PartialFunction[(Bytecode.Label, Bytecode), CodeFragment]): MethodBody = {
     rewrite_** {
-      case bc if f.isDefinedAt(bc) => Map(bc.label -> f(bc))
+      case x @ (label, bc) if f.isDefinedAt(x) => Map(label -> f(x))
     }
   }
 
   def rewrite_**(
-    f: PartialFunction[Bytecode, Map[Bytecode.Label, CodeFragment]]
+    f: PartialFunction[(Bytecode.Label, Bytecode), Map[Bytecode.Label, CodeFragment]]
   ): MethodBody =
     copy(codeFragment = codeFragment.rewrite_**(f))
 
   def rewriteClassRef(from: ClassRef, to: ClassRef): MethodBody = {
-    rewrite { case bc: Bytecode.HasClassRef if bc.classRef == from => bc.rewriteClassRef(to) }
+    rewrite { case (label, bc: Bytecode.HasClassRef) if bc.classRef == from => bc.rewriteClassRef(to) }
   }
-
-  def replaceBytecode(l: Bytecode.Label, newBc: Bytecode): MethodBody =
-    replaceBytecode(l, CodeFragment.bytecode(newBc))
-
-  def replaceBytecode(l: Bytecode.Label, cf: CodeFragment): MethodBody =
-    copy(codeFragment = codeFragment.replaceBytecode(l, cf))
 
   def pretty: String =
     s"""$descriptor [$attribute]
-    ${codeFragment.pretty}"""
+${codeFragment.pretty}"""
 
   def dataflow(self: Instance[_ <: AnyRef]): DataFlow =
     new DataFlow(this, Data.Reference(self.thisRef.toTypeRef, self))

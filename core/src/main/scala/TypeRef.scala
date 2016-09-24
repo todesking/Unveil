@@ -1,8 +1,13 @@
 package com.todesking.unveil
 
 sealed abstract class TypeRef {
-  def isDoubleWord: Boolean = false
+  def isDoubleWord: Boolean
   def wordSize: Int = if (isDoubleWord) 2 else 1
+  def isAssignableFrom(rhs: TypeRef): Boolean =
+    (this == rhs) || ((this, rhs) match {
+      case (l: TypeRef.Reference, r: TypeRef.Reference) if l.classRef >= r.classRef => true
+      case _ => false
+    })
 }
 object TypeRef {
   def parse(src: String, cl: ClassLoader): TypeRef.Public =
@@ -36,17 +41,20 @@ object TypeRef {
       case (_, SecondWord) => Undefined
     }
 
-  trait DoubleWord extends TypeRef {
+  sealed trait SingleWord extends TypeRef {
+    override def isDoubleWord = false
+  }
+  sealed trait DoubleWord extends TypeRef {
     override def isDoubleWord = true
   }
 
-  case object Undefined extends TypeRef {
+  case object Undefined extends TypeRef with SingleWord {
     override def toString = "[undefined]"
   }
-  case object SecondWord extends TypeRef {
+  case object SecondWord extends TypeRef with SingleWord {
     override def toString = "[second word]"
   }
-  case object Null extends TypeRef {
+  case object Null extends TypeRef with SingleWord {
     override def toString = "[null]"
   }
 
@@ -63,17 +71,17 @@ object TypeRef {
     override val defaultValue: Any
   ) extends Public
 
-  object Byte extends Primitive("int", "B", java.lang.Byte.TYPE, 0)
-  object Boolean extends Primitive("bool", "Z", java.lang.Boolean.TYPE, false)
-  object Char extends Primitive("char", "C", java.lang.Character.TYPE, 0)
-  object Short extends Primitive("short", "S", java.lang.Short.TYPE, 0)
-  object Int extends Primitive("int", "I", java.lang.Integer.TYPE, 0)
-  object Float extends Primitive("float", "F", java.lang.Float.TYPE, 0.0f)
-  object Long extends Primitive("long", "J", java.lang.Long.TYPE, 0L) with DoubleWord
-  object Double extends Primitive("double", "D", java.lang.Double.TYPE, 0.0) with DoubleWord
-  object Void extends Primitive("void", "V", java.lang.Void.TYPE, null)
+  case object Byte extends Primitive("int", "B", java.lang.Byte.TYPE, 0) with SingleWord
+  case object Boolean extends Primitive("bool", "Z", java.lang.Boolean.TYPE, false) with SingleWord
+  case object Char extends Primitive("char", "C", java.lang.Character.TYPE, 0) with SingleWord
+  case object Short extends Primitive("short", "S", java.lang.Short.TYPE, 0) with SingleWord
+  case object Int extends Primitive("int", "I", java.lang.Integer.TYPE, 0) with SingleWord
+  case object Float extends Primitive("float", "F", java.lang.Float.TYPE, 0.0f) with SingleWord
+  case object Long extends Primitive("long", "J", java.lang.Long.TYPE, 0L) with DoubleWord
+  case object Double extends Primitive("double", "D", java.lang.Double.TYPE, 0.0) with DoubleWord
+  case object Void extends Primitive("void", "V", java.lang.Void.TYPE, null) with SingleWord
 
-  case class Reference(classRef: ClassRef) extends Public {
+  case class Reference(classRef: ClassRef) extends Public with SingleWord {
     override def str = s"L${classRef.binaryName};"
     override def toString = classRef.toString
     override def defaultValue = null
@@ -83,4 +91,6 @@ object TypeRef {
       case c: ClassRef.Extend => throw new IllegalStateException()
     }
   }
+
+  val Object: Reference = Reference(ClassRef.Object)
 }

@@ -83,21 +83,21 @@ object Analyze {
         val constAssigns = mutable.HashMap.empty[(ClassRef, FieldRef), Any]
         val argAssigns = mutable.HashMap.empty[(ClassRef, FieldRef), Int]
         body.bytecode.foreach {
-          case bc if df.possibleReturns(bc.label).isEmpty =>
+          case (label, bc) if df.possibleReturns(label).isEmpty =>
           // ignore error path
-          case bc: Shuffle =>
-          case bc: Jump =>
-          case bc: Return =>
-          case bc: ConstX =>
-          case bc: Branch if df.possibleReturns(body.jumpTargets(bc.jumpTarget)).isEmpty || df.possibleReturns(df.fallThroughs(bc.label)).isEmpty =>
+          case (label, bc: Shuffle) =>
+          case (label, bc: Jump) =>
+          case (label, bc: Return) =>
+          case (label, bc: ConstX) =>
+          case (label, bc: Branch) if df.possibleReturns(body.jumpTargets(label -> bc.jumpTarget)).isEmpty || df.possibleReturns(df.fallThroughs(label)).isEmpty =>
           // OK if one of jumps exit by throw
-          case bc @ invokespecial(classRef, methodRef) if df.onlyValue(bc.objectref).map(_.isInstance(self)).getOrElse(false) && methodRef.isInit =>
+          case (label, bc @ invokespecial(classRef, methodRef)) if df.onlyValue(bc.objectref).map(_.isInstance(self)).getOrElse(false) && methodRef.isInit =>
             // super ctor invocation
             if (superConstructor.nonEmpty)
               throw makeError(s"Another constructor called twice in ${ctorClass}.<init>${body.descriptor}")
             superConstructor =
               SetterConstructor.from(self, classRef, self.methodBody(classRef, methodRef)).map(Some(_)).get
-          case bc @ putfield(classRef, fieldRef) if df.dataValue(bc.objectref).isInstance(self) =>
+          case (label, bc @ putfield(classRef, fieldRef)) if df.dataValue(bc.objectref).isInstance(self) =>
             df.dataValue(bc.value).value.map { v =>
               // value from constant
               constAssigns += (classRef -> fieldRef) -> v

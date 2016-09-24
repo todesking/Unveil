@@ -11,28 +11,30 @@ import java.lang.reflect.{ Method => JMethod }
 
 import com.todesking.scalapp.syntax._
 
-// TODO: posh(DataLabel.Out, Data) etc
+// TODO: posh(DataLabel.Out, Data) etc // TODO: WHAT is posh???
 case class FrameUpdate(
+    label: Bytecode.Label,
     bytecode: Bytecode,
     newFrame: Frame,
     binding: Map[DataLabel.In, DataLabel.Out],
     effectDependencies: Map[Bytecode.Label, Effect],
     dataValues: Map[DataLabel, FrameItem]
 ) {
-  def this(bytecode: Bytecode, frame: Frame) =
+  def this(label: Bytecode.Label, bytecode: Bytecode, frame: Frame) =
     this(
+      label,
       bytecode,
       frame.copy(effect = bytecode.effect getOrElse frame.effect),
       Map.empty,
-      bytecode.effect.map { _ => bytecode.label -> frame.effect }.toMap,
+      bytecode.effect.map { _ => label -> frame.effect }.toMap,
       Map.empty
     )
 
   private[this] def fail(msg: String): RuntimeException =
-    new RuntimeException(s"Analysis failed at L${bytecode.label} ${bytecode}: ${msg}")
+    new RuntimeException(s"Analysis failed at ${label.format("L%d")} ${bytecode}: ${msg}")
 
   private[this] def requireSingleLocal(n: Int): Unit = {
-    if(!newFrame.locals.contains(n)) throw fail(s"Local $n not defined")
+    if (!newFrame.locals.contains(n)) throw fail(s"Local $n not defined")
     requireSingleWord(newFrame.locals(n))
   }
 
@@ -47,6 +49,16 @@ case class FrameUpdate(
   private[this] def requireDoubleWord(fd: FrameItem): Unit =
     if (!fd.data.typeRef.isDoubleWord || fd.data.typeRef == TypeRef.SecondWord || fd.data.typeRef == TypeRef.Undefined)
       throw fail(s"double word value expected but ${fd}")
+
+  private[this] def requireStackTopType(f: Frame, t: TypeRef): Unit = t match {
+    case t: TypeRef.DoubleWord =>
+      if(f.stack.size < 2) throw fail("double word expected but stack too short")
+      if(!t.isAssignableFrom(f.stack(0).data.typeRef)) throw fail(s"$t expected but ${f.stack(0).data.typeRef}")
+      requireSecondWord(f.stack(1))
+    case t: TypeRef.SingleWord =>
+      if(f.stack.size < 1) throw fail("single word expected but stack too short")
+      if(!t.isAssignableFrom(f.stack(0).data.typeRef)) throw fail(s"$t expected but ${f.stack(0).data.typeRef}")
+  }
 
   private[this] def makeSecondWord(fd: FrameItem): FrameItem =
     FrameItem(DataLabel.out(s"second word of ${fd.label.name}"), fd.data.secondWordData)
@@ -89,6 +101,7 @@ case class FrameUpdate(
 
   private[this] def pop0(in: DataLabel.In, fi: FrameItem, stack: List[FrameItem]): FrameUpdate =
     FrameUpdate(
+      label,
       bytecode,
       newFrame.copy(stack = stack),
       binding + (in -> fi.label),
@@ -112,6 +125,7 @@ case class FrameUpdate(
 
   private[this] def push0(d: FrameItem, stack: List[FrameItem]): FrameUpdate =
     FrameUpdate(
+      label,
       bytecode,
       newFrame.copy(stack = stack),
       binding,
@@ -126,6 +140,7 @@ case class FrameUpdate(
       else
         newFrame.locals.updated(n, data)
     FrameUpdate(
+      label,
       bytecode,
       newFrame.copy(locals = newFrame.locals.updated(n, data)),
       binding,
@@ -148,15 +163,14 @@ case class FrameUpdate(
   def load1(n: Int): FrameUpdate = push1(local1(n))
   def load2(n: Int): FrameUpdate = push2(local2(n))
 
-  def store1(n: Int): FrameUpdate = {
-    requireSingleWord(newFrame.stackTop)
+  def store1(tpe: TypeRef.SingleWord, n: Int): FrameUpdate = {
+    requireStackTopType(newFrame, tpe)
     setLocal(n, newFrame.stackTop)
       .pop1()
   }
 
-  def store2(n: Int): FrameUpdate = {
-    requireDoubleWord(newFrame.stack(0))
-    requireSecondWord(newFrame.stack(1))
+  def store2(tpe: TypeRef.DoubleWord, n: Int): FrameUpdate = {
+    requireStackTopType(newFrame, tpe)
     setLocal(n, newFrame.stackTop)
       .setLocal(n + 1, makeSecondWord(newFrame.stackTop))
       .pop2()
@@ -167,6 +181,7 @@ case class FrameUpdate(
       if (newFrame.stackTop.data.typeRef == TypeRef.SecondWord) newFrame.stack(1)
       else newFrame.stackTop
     FrameUpdate(
+      label,
       bytecode,
       Frame(Map.empty, List.empty, newFrame.effect),
       binding + (retval -> d.label),
@@ -178,6 +193,7 @@ case class FrameUpdate(
   def athrow(objectref: DataLabel.In): FrameUpdate = {
     requireSingleWord(newFrame.stackTop)
     FrameUpdate(
+      label,
       bytecode,
       newFrame.copy(stack = newFrame.stack.take(1)),
       binding + (objectref -> newFrame.stack.head.label),

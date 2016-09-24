@@ -64,6 +64,7 @@ sealed abstract class Instance[A <: AnyRef] {
   def resolveField(cr: ClassRef, fr: FieldRef): ClassRef =
     if (fields.contains(cr -> fr)) cr
     else Reflect.superClassOf(cr).map { sc => resolveField(sc, fr) } getOrElse {
+      println(s"!!!!!!!!!!!!!!!!!!!!! ${fields} !!!!!!!!!!!!!!!!!!!!")
       throw new IllegalArgumentException(s"Field resolution failed: $cr.$fr")
     }
 
@@ -178,8 +179,16 @@ new/overriden methods:
 ${
         thisMethods.map {
           case (mr, body) =>
-            s"""def ${mr} ${body.attribute}
-${body.pretty}"""
+            try {
+              val df = dataflow(mr)
+              s"""def ${mr} ${body.attribute}
+${df.pretty.split("\n").map("  " + _).mkString("\n")}"""
+            } catch {
+              case scala.util.control.NonFatal(e) =>
+                s"""(dataflow analysis failed: $e)
+def ${mr} ${body.attribute}
+${body.pretty.split("\n").map("  " + _).mkString("\n")}"""
+            }
         }.mkString("\n")
       }
 New fields:
@@ -284,29 +293,29 @@ ${
       MethodBody(
         descriptor = constructorDescriptor,
         MethodAttribute.Public,
-        codeFragment = CodeFragment(
+        codeFragment = new CodeFragment(
+        Seq(
+          Seq(aload(0)),
+          superConstructor.descriptor.args.zipWithIndex.map {
+            case (t, i) =>
+              load(t, i + thisFieldAssigns.size + 1)
+          },
           Seq(
-            Seq(aload(0)),
-            superConstructor.descriptor.args.zipWithIndex.map {
-              case (t, i) =>
-                load(t, i + thisFieldAssigns.size + 1)
-            },
-            Seq(
-              invokespecial(
-                ClassRef.of(superClass),
-                superConstructor.methodRef
-              )
+            invokespecial(
+              ClassRef.of(superClass),
+              superConstructor.methodRef
             )
-          ).flatten ++ thisFieldAssigns.flatMap {
-              case (fr, i) =>
-                import Bytecode._
-                Seq(
-                  aload(0),
-                  load(fr.descriptor.typeRef, i),
-                  putfield(thisRef, fr)
-                )
-            }.toSeq ++ Seq(vreturn())
-        )
+          )
+        ).flatten ++ thisFieldAssigns.flatMap {
+            case (fr, i) =>
+              import Bytecode._
+              Seq(
+                aload(0),
+                load(fr.descriptor.typeRef, i),
+                putfield(thisRef, fr)
+              )
+          }.toSeq ++ Seq(vreturn())
+      )
       )
     }
     override lazy val materialized: Original[A] = {
@@ -482,28 +491,28 @@ ${
             val newMr = methodRenaming.get(k).getOrElse(mr)
             import Bytecode._
             newMr -> df.body.rewrite {
-              case bc @ invokevirtual(cr, mr) if df.mustThis(bc.objectref) =>
+              case (label, bc @ invokevirtual(cr, mr)) if df.mustThis(bc.objectref) =>
                 val vcr = o.resolveVirtualMethod(mr)
                 methodRenaming.get(vcr -> mr).fold {
                   bc.rewriteClassRef(thisRef)
                 } { newMr =>
                   bc.rewriteMethodRef(thisRef, newMr)
                 }
-              case bc @ invokeinterface(cr, mr, _) if df.mustThis(bc.objectref) =>
+              case (label, bc @ invokeinterface(cr, mr, _)) if df.mustThis(bc.objectref) =>
                 val vcr = o.resolveVirtualMethod(mr)
                 methodRenaming.get(vcr -> mr).fold {
                   bc.rewriteClassRef(thisRef)
                 } { newMr =>
                   bc.rewriteMethodRef(thisRef, newMr)
                 }
-              case bc @ invokespecial(cr, mr) if df.mustThis(bc.objectref) =>
+              case (label, bc @ invokespecial(cr, mr)) if df.mustThis(bc.objectref) =>
                 // TODO: resolve special
                 methodRenaming.get(cr -> mr).fold {
                   bc
                 } { newMr =>
                   bc.rewriteMethodRef(thisRef, newMr)
                 }
-              case bc: InstanceFieldAccess if df.mustThis(bc.objectref) =>
+              case (label, bc: InstanceFieldAccess) if df.mustThis(bc.objectref) =>
                 fieldRenaming.get(o.resolveField(bc.classRef, bc.fieldRef) -> bc.fieldRef).fold(bc) { newFr =>
                   bc.rewriteFieldRef(thisRef, newFr)
                 }

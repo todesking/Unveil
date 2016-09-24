@@ -30,9 +30,10 @@ class DataFlow(val body: MethodBody, val self: Data.Reference) {
   // Some(true): data has single value that point the instance
   // Some(false): data is not point the instance
   // None: not sure
+  // TODO: check type
   def isInstance(l: DataLabel, i: Instance[_ <: AnyRef]): Option[Boolean] =
     onlyValue(l).map(_.isInstance(i)) orElse {
-      if (possibleValues(l).exists(_.isInstance(i))) None
+      if (possibleValues(l).exists(_.isInstance(i))) None // TODO: make&use mayInstance()
       else Some(false)
     }
 
@@ -55,7 +56,7 @@ class DataFlow(val body: MethodBody, val self: Data.Reference) {
 
   def usedFieldsOf(i: Instance[_ <: AnyRef]): Set[(ClassRef, FieldRef)] =
     body.bytecode.foldLeft(Set.empty[(ClassRef, FieldRef)]) {
-      case (agg, bc) =>
+      case (agg, (label, bc)) =>
         import Bytecode._
         bc match {
           case bc: InstanceFieldAccess if mustInstance(bc.objectref, i) =>
@@ -66,7 +67,7 @@ class DataFlow(val body: MethodBody, val self: Data.Reference) {
 
   def usedMethodsOf(i: Instance[_ <: AnyRef]): Set[(ClassRef, MethodRef)] =
     body.bytecode.foldLeft(Set.empty[(ClassRef, MethodRef)]) {
-      case (agg, bc) =>
+      case (agg, (label, bc)) =>
         import Bytecode._
         bc match {
           case bc @ invokevirtual(cr, mr) if mustInstance(bc.objectref, i) =>
@@ -102,7 +103,7 @@ class DataFlow(val body: MethodBody, val self: Data.Reference) {
   private[this] def possibleExits0(l: Bytecode.Label, ignore: Set[Bytecode.Label]): Set[Bytecode.Label] =
     if (ignore.contains(l)) Set.empty
     else body.labelToBytecode(l) match {
-      case bc: Bytecode.Exit => Set(bc.label)
+      case bc: Bytecode.Exit => Set(l)
       case bc => jumpDestinations(l).flatMap { l2 => possibleExits0(l2, ignore + l) }
     }
 
@@ -110,8 +111,8 @@ class DataFlow(val body: MethodBody, val self: Data.Reference) {
     val m = Collections.newMultiMap[Bytecode.Label, Bytecode.Label]
     fallThroughs.foreach { case (from, to) => m.addBinding(to, from) }
     body.bytecode.foreach {
-      case bc: Bytecode.HasJumpTargets =>
-        bc.jumpTargets.foreach { t => m.addBinding(bc.label, body.jumpTargets(t)) }
+      case (label, bc: Bytecode.HasJumpTargets) =>
+        bc.jumpTargets.foreach { t => m.addBinding(label, body.jumpTargets(label -> t)) }
       case _ =>
     }
     m.mapValues(_.toSet).toMap
@@ -120,7 +121,7 @@ class DataFlow(val body: MethodBody, val self: Data.Reference) {
   def jumpDestinations(l: Bytecode.Label): Set[Bytecode.Label] =
     fallThroughs.get(l).toSet ++
       (body.labelToBytecode(l) match {
-        case bc: Bytecode.HasJumpTargets => bc.jumpTargets.map(body.jumpTargets)
+        case bc: Bytecode.HasJumpTargets => bc.jumpTargets.map { jt => body.jumpTargets(l -> jt) }
         case _ => Set.empty
       })
 
@@ -152,32 +153,32 @@ class DataFlow(val body: MethodBody, val self: Data.Reference) {
 
   def toDot(): String = {
     import Graphviz._
-    val bcs = body.bytecode.map { bc => (bc.label -> bc) }.toMap
-    val bcName = Bytecode.Label.namer("bytecode_", "")
+    val bcLabelFormat = "L%d"
     val dName = DataLabel.namer("data_", "")
     val eName = Effect.namer("effect_", "Eff#")
     s"""digraph {
 graph[rankdir="BT"]
 start[label="start" shape="doublecircle"]
-${bcName.id(body.bytecode.head.label)} -> start
+${body.bytecode.head._1.format(bcLabelFormat)} -> start
 ${eName.id(initialFrame.effect)} -> start [style="dotted"]
     ${
-      body.bytecode.map { bc =>
-        drawNode(bcName.id(bc.label), 'label -> bc.pretty, 'shape -> "rectangle")
+      body.bytecode.map {
+        case (label, bc) =>
+          drawNode(label.format(bcLabelFormat), 'label -> bc.pretty, 'shape -> "rectangle")
       }.mkString("\n")
     }
     ${
       fallThroughs.map {
         case (src, d) =>
-          drawEdge(bcName.id(d), bcName.id(src))
+          drawEdge(d.format(bcLabelFormat), src.format(bcLabelFormat))
       }.mkString("\n")
     }
     ${
       body.bytecode.flatMap {
-        case bc: Bytecode.Jump =>
-          Seq(drawEdge(bcName.id(body.jumpTargets(bc.target)), bcName.id(bc.label)))
-        case bc: Bytecode.Branch =>
-          Seq(drawEdge(bcName.id(body.jumpTargets(bc.target)), bcName.id(bc.label), 'label -> "then"))
+        case (label, bc: Bytecode.Jump) =>
+          Seq(drawEdge(body.jumpTargets(label -> bc.target).format(bcLabelFormat), label.format(bcLabelFormat)))
+        case (label, bc: Bytecode.Branch) =>
+          Seq(drawEdge(body.jumpTargets(label -> bc.target).format(bcLabelFormat), label.format(bcLabelFormat), 'label -> "then"))
         case _ =>
           Seq.empty
       }.mkString("\n")
@@ -189,19 +190,20 @@ ${eName.id(initialFrame.effect)} -> start [style="dotted"]
       }.mkString("\n")
     }
     ${
-      body.bytecode.flatMap { bc =>
-        bc.inputs.flatMap { i =>
-          dataBinding.get(i).map(i -> _)
-        }.map {
-          case (i, o) =>
-            drawEdge(bcName.id(bc.label), dName.id(o), 'style -> "dotted", 'label -> i.name)
-        }
+      body.bytecode.flatMap {
+        case (label, bc) =>
+          bc.inputs.flatMap { i =>
+            dataBinding.get(i).map(i -> _)
+          }.map {
+            case (i, o) =>
+              drawEdge(label.format(bcLabelFormat), dName.id(o), 'style -> "dotted", 'label -> i.name)
+          }
       }.mkString("\n")
     }
     ${
-      body.bytecode.flatMap { bc => bc.output.map(bc -> _) }.map {
-        case (bc, o) =>
-          drawEdge(dName.id(o), bcName.id(bc.label), 'style -> "dotted", 'label -> o.name)
+      body.bytecode.flatMap { case (label, bc) => bc.output.map { o => label -> (bc -> o) } }.map {
+        case (label, (bc, o)) =>
+          drawEdge(dName.id(o), label.format(bcLabelFormat), 'style -> "dotted", 'label -> o.name)
       }.mkString("\n")
     }
     ${
@@ -219,13 +221,13 @@ ${eName.id(initialFrame.effect)} -> start [style="dotted"]
     ${
       effectDependencies.map {
         case (bcl, e) =>
-          drawEdge(bcName.id(bcl), eName.id(e), 'style -> "dotted")
+          drawEdge(bcl.format(bcLabelFormat), eName.id(e), 'style -> "dotted")
       }.mkString("\n")
     }
     ${
-      body.bytecode.flatMap { bc => bc.effect.map(bc -> _) }.map {
-        case (bc, e) =>
-          drawEdge(eName.id(e), bcName.id(bc.label), 'style -> "dotted")
+      body.bytecode.flatMap { case (label, bc) => bc.effect.map { eff => label -> (bc -> eff) } }.map {
+        case (label, (bc, eff)) =>
+          drawEdge(eName.id(eff), label.format(bcLabelFormat), 'style -> "dotted")
       }.mkString("\n")
     }
 }"""
@@ -236,7 +238,7 @@ ${eName.id(initialFrame.effect)} -> start [style="dotted"]
     body.bytecode.sliding(2).map {
       case Seq() => Map.empty
       case Seq(_) => Map.empty
-      case Seq(bc1: FallThrough, bc2) => Map(bc1.label -> bc2.label)
+      case Seq((l1, bc1: FallThrough), (l2, bc2)) => Map(l1 -> l2)
       case Seq(_, _) => Map.empty
     }.foldLeft(Map.empty[Bytecode.Label, Bytecode.Label]) { (a, m) => a ++ m }
   }
@@ -274,7 +276,7 @@ ${eName.id(initialFrame.effect)} -> start [style="dotted"]
     val liveBcs = mutable.HashMap.empty[Bytecode.Label, Bytecode]
 
     val tasks = mutable.Set.empty[(Bytecode.Label, Frame)]
-    tasks += (body.bytecode.head.label -> initialFrame)
+    tasks += (body.bytecode.head._1 -> initialFrame)
 
     while (tasks.nonEmpty) {
       val (pos, frame) = tasks.head
@@ -282,20 +284,26 @@ ${eName.id(initialFrame.effect)} -> start [style="dotted"]
       val merged = preFrames.get(pos).map(merge(_, frame)) getOrElse frame
       if (preFrames.get(pos).map(_ != merged) getOrElse true) {
         preFrames(pos) = merged
-        val bseq = body.bytecode.dropWhile(_.label != pos)
-        val bc = bseq.head
-        liveBcs(bc.label) = bc
-        val u = bc.nextFrame(merged)
-        updates(bc.label) = u
+        val bseq = body.bytecode.dropWhile(_._1 != pos)
+        val (label, bc) = bseq.head
+        assert(label == pos)
+        liveBcs(label) = bc
+        val u = try {
+          bc.nextFrame(label, merged)
+        } catch {
+          case scala.util.control.NonFatal(e) =>
+            throw new RuntimeException(s"Errow while dataflow analysis: ${e.getMessage}: ${label.format("L%d")} $bc, frame={\n${frame.pretty}\n}", e)
+        }
+        updates(label) = u
         bc match {
           case r: Bytecode.Return =>
           case j: Bytecode.Jump =>
-            tasks += (body.jumpTargets(j.target) -> u.newFrame)
+            tasks += (body.jumpTargets(label -> j.target) -> u.newFrame)
           case b: Bytecode.Branch =>
-            tasks += (body.jumpTargets(b.target) -> u.newFrame)
-            tasks += (bseq(1).label -> u.newFrame)
+            tasks += (body.jumpTargets(label -> b.target) -> u.newFrame)
+            tasks += (bseq(1)._1 -> u.newFrame)
           case _: Bytecode.Procedure | _: Bytecode.Shuffle =>
-            tasks += (bseq(1).label -> u.newFrame)
+            tasks += (bseq(1)._1 -> u.newFrame)
           case Bytecode.athrow() =>
           // TODO: Exception handler
         }
@@ -321,5 +329,26 @@ ${eName.id(initialFrame.effect)} -> start [style="dotted"]
     val maxStackDepth = allFrames.map(_.stack.size).max
 
     (binding.toMap, dataValues.toMap, dataMerges.toMap, effectDependencies.toMap, effectMerges.toMap, liveBcs.values.toSeq, maxLocals, maxStackDepth, preFrames.toMap)
+  }
+
+  def pretty: String = {
+    val format = "L%03d"
+    def formatData(l: DataLabel, d: Data): String = {
+      val typeStr = if (d.typeRef == self.typeRef) "this.class" else d.typeRef.toString
+      val data = s"$typeStr = ${d.valueString}"
+      isThis(l).fold {
+        s"$data(this?)"
+      } { yes =>
+        if (yes) s"this"
+        else data
+      }
+    }
+    body.bytecode.map {
+      case (label, bc) =>
+        val base = s"${label.format(format)} ${bc.pretty}"
+        val in = bc.inputs.map { in => s"  # ${in.name}: ${possibleValues(in).map(formatData(in, _)).mkString(", ")}" }
+        val out = bc.output.map { out => s"  # ${out.name}: ${possibleValues(out).map(formatData(out, _)).mkString(", ")}" }.toSeq
+        (Seq(base) ++ in ++ out).mkString("\n")
+    }.mkString("\n")
   }
 }
