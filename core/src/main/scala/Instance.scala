@@ -45,6 +45,7 @@ sealed abstract class Instance[A <: AnyRef] {
     hasVirtualMethod(MethodRef.parse(ref, thisRef.classLoader))
 
   // TODO: rename this method
+  // TODO: [BUG] if `this` is leaked...??
   def extendMethods(seed: Set[(ClassRef, MethodRef)]): Set[(ClassRef, MethodRef)] = {
     // TODO: this is very inefficient
     var ms: Set[(ClassRef, MethodRef)] = null
@@ -99,7 +100,7 @@ object Instance {
 
     override final def equals(that: Any) = that match {
       case Original(v) => value eq v
-      case _ => false
+      case that: AnyRef => this eq that
     }
 
     override def pretty = s"Original(${jClass.getName})"
@@ -491,28 +492,28 @@ ${
             val newMr = methodRenaming.get(k).getOrElse(mr)
             import Bytecode._
             newMr -> df.body.rewrite {
-              case (label, bc @ invokevirtual(cr, mr)) if df.mustThis(bc.objectref) =>
+              case (label, bc @ invokevirtual(cr, mr)) if df.mustThis(label, bc.objectref) =>
                 val vcr = o.resolveVirtualMethod(mr)
                 methodRenaming.get(vcr -> mr).fold {
                   bc.rewriteClassRef(thisRef)
                 } { newMr =>
                   bc.rewriteMethodRef(thisRef, newMr)
                 }
-              case (label, bc @ invokeinterface(cr, mr, _)) if df.mustThis(bc.objectref) =>
+              case (label, bc @ invokeinterface(cr, mr, _)) if df.mustThis(label, bc.objectref) =>
                 val vcr = o.resolveVirtualMethod(mr)
                 methodRenaming.get(vcr -> mr).fold {
                   bc.rewriteClassRef(thisRef)
                 } { newMr =>
                   bc.rewriteMethodRef(thisRef, newMr)
                 }
-              case (label, bc @ invokespecial(cr, mr)) if df.mustThis(bc.objectref) =>
+              case (label, bc @ invokespecial(cr, mr)) if df.mustThis(label, bc.objectref) =>
                 // TODO: resolve special
                 methodRenaming.get(cr -> mr).fold {
                   bc
                 } { newMr =>
                   bc.rewriteMethodRef(thisRef, newMr)
                 }
-              case (label, bc: InstanceFieldAccess) if df.mustThis(bc.objectref) =>
+              case (label, bc: InstanceFieldAccess) if df.mustThis(label, bc.objectref) =>
                 fieldRenaming.get(o.resolveField(bc.classRef, bc.fieldRef) -> bc.fieldRef).fold(bc) { newFr =>
                   bc.rewriteFieldRef(thisRef, newFr)
                 }

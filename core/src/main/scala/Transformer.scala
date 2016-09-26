@@ -116,9 +116,9 @@ object Transformer {
                     .map {
                       case ((cr, mr), df) =>
                         methodRenaming(cr -> mr) -> df.body.rewrite {
-                          case (_, bc: Bytecode.InvokeInstanceMethod) if df.mustThis(bc.objectref) =>
+                          case (label, bc: Bytecode.InvokeInstanceMethod) if df.mustThis(label, bc.objectref) =>
                             Bytecode.invokespecial(self.thisRef, methodRenaming(bc.classRef, bc.methodRef))
-                          case (_, bc: Bytecode.InstanceFieldAccess) if df.mustThis(bc.objectref) =>
+                          case (label, bc: Bytecode.InstanceFieldAccess) if df.mustThis(label, bc.objectref) =>
                             bc.rewriteFieldRef(self.thisRef, fieldRenaming(bc.classRef, bc.fieldRef))
                         }.makePrivate
                     }
@@ -128,29 +128,30 @@ object Transformer {
                       case (cr, mr) =>
                         val df = self.dataflow(cr, mr)
                         import Bytecode._
-                        val memberAccessOnly =
+                        val leaked =
                           df.body.bytecode
-                            .filter { case (_, bc) => bc.inputs.exists { i => df.mustInstance(i, fieldInstance) } }
+                            .filter { case (label, bc) => bc.inputs.exists { i => df.dataSource(label, i) == DataSource.Field(fcr, fr) } }
                             .forall {
-                              case (_, bc @ getfield(_, _)) => true
-                              case (_, bc: InvokeInstanceMethod) if !bc.args.exists { a => df.mustInstance(a, fieldInstance) } => true
-                              case (_, bc) => false
+                              case (label, bc @ getfield(_, _)) => false
+                              case (label, bc: InvokeInstanceMethod) =>
+                                bc.args.exists { arg => df.dataSource(label, arg) == DataSource.Field(fcr, fr) }
+                              case (label, bc) => true
                             }
-                        if (!memberAccessOnly) {
+                        if (leaked) {
                           el.log(s"[SKIP] the field is leaked in method $mr")
                           mr -> df.body
                         } else {
                           // TODO: use df.mustFieldRef instead of df.mustInstance when rewriting
                           mr -> df.body.rewrite {
-                            case (_, bc @ getfield(cr1, fr1)) if df.mustThis(bc.objectref) && self.resolveField(cr1, fr1) == cr && fr1 == fr =>
+                            case (label, bc @ getfield(cr1, fr1)) if df.mustThis(label, bc.objectref) && self.resolveField(cr1, fr1) == cr && fr1 == fr =>
                               nop()
-                            case (_, bc: InvokeInstanceMethod) if df.mustInstance(bc.objectref, fieldInstance) =>
+                            case (label, bc: InvokeInstanceMethod) if df.mustInstance(label, bc.objectref, fieldInstance) =>
                               methodRenaming.get(fieldInstance.resolveVirtualMethod(bc.methodRef) -> bc.methodRef).fold {
                                 throw new AssertionError(s"Can't find renamed method for ${bc.classRef}.${bc.methodRef}")
                               } { mr =>
                                 invokespecial(self.thisRef, mr)
                               }
-                            case (_, bc: InstanceFieldAccess) if df.mustInstance(bc.objectref, fieldInstance) =>
+                            case (label, bc: InstanceFieldAccess) if df.mustInstance(label, bc.objectref, fieldInstance) =>
                               fieldRenaming.get(fieldInstance.resolveField(bc.classRef, bc.fieldRef) -> bc.fieldRef).fold(bc) {
                                 case fr =>
                                   bc.rewriteFieldRef(self.thisRef, fr)
@@ -193,7 +194,7 @@ object Transformer {
       var localOffset = df.maxLocals
       import Bytecode._
       df.body.rewrite_* {
-        case (_, bc: InvokeInstanceMethod) if df.mustThis(bc.objectref) =>
+        case (label, bc: InvokeInstanceMethod) if df.mustThis(label, bc.objectref) =>
           el.section(s"Inline invocation of ${bc.classRef}.${bc.methodRef}") { el =>
             val mr = bc.methodRef
             val cr =
@@ -222,7 +223,7 @@ object Transformer {
                   new CodeFragment(
                     Seq(store(bc.returnType, resultLocal)) ++ (
                       calleeDf.beforeFrames(label).stack.drop(bc.returnType.wordSize).map {
-                        case FrameItem(l, d) =>
+                        case FrameItem(src, d) =>
                           autoPop(d.typeRef)
                       }
                     ) ++ Seq(
@@ -232,7 +233,7 @@ object Transformer {
                 case (label, bc: VoidReturn) =>
                   new CodeFragment(
                     calleeDf.beforeFrames(label).stack.map {
-                      case FrameItem(l, d) =>
+                      case FrameItem(src, d) =>
                         autoPop(d.typeRef)
                     }
                   )

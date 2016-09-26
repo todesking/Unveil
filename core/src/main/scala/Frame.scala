@@ -1,6 +1,6 @@
 package com.todesking.unveil
 
-case class Frame(locals: Map[Int, FrameItem], stack: List[FrameItem], effect: Effect) {
+case class Frame(locals: Map[Int, FrameItem], stack: List[FrameItem]) {
   def local(n: Int): FrameItem =
     locals(n)
 

@@ -16,19 +16,21 @@ case class FrameUpdate(
     label: Bytecode.Label,
     bytecode: Bytecode,
     newFrame: Frame,
-    binding: Map[DataLabel.In, DataLabel.Out],
-    effectDependencies: Map[Bytecode.Label, Effect],
-    dataValues: Map[DataLabel, FrameItem]
+    frameItems: Map[(Bytecode.Label, DataPort), FrameItem]
 ) {
   def this(label: Bytecode.Label, bytecode: Bytecode, frame: Frame) =
     this(
       label,
       bytecode,
-      frame.copy(effect = bytecode.effect getOrElse frame.effect),
-      Map.empty,
-      bytecode.effect.map { _ => label -> frame.effect }.toMap,
+      frame,
       Map.empty
     )
+
+  lazy val dataValues: Map[(Bytecode.Label, DataPort), Data] =
+    frameItems.mapValues(_.data)
+
+  lazy val dataSources: Map[(Bytecode.Label, DataPort), DataSource] =
+    frameItems.mapValues(_.source)
 
   private[this] def fail(msg: String): RuntimeException =
     new RuntimeException(s"Analysis failed at ${label.format("L%d")} ${bytecode}: ${msg}")
@@ -38,17 +40,17 @@ case class FrameUpdate(
     requireSingleWord(newFrame.locals(n))
   }
 
-  private[this] def requireSecondWord(fd: FrameItem): Unit =
-    if (fd.data.typeRef != TypeRef.SecondWord)
-      throw fail(s"second word value expected but ${fd}")
+  private[this] def requireSecondWord(fi: FrameItem): Unit =
+    if (fi.data.typeRef != TypeRef.SecondWord)
+      throw fail(s"second word value expected but ${fi}")
 
-  private[this] def requireSingleWord(fd: FrameItem): Unit =
-    if (fd.data.typeRef.isDoubleWord || fd.data.typeRef == TypeRef.SecondWord || fd.data.typeRef == TypeRef.Undefined)
-      throw fail(s"single word value expected but ${fd}")
+  private[this] def requireSingleWord(fi: FrameItem): Unit =
+    if (fi.data.typeRef.isDoubleWord || fi.data.typeRef == TypeRef.SecondWord || fi.data.typeRef == TypeRef.Undefined)
+      throw fail(s"single word value expected but ${fi}")
 
-  private[this] def requireDoubleWord(fd: FrameItem): Unit =
-    if (!fd.data.typeRef.isDoubleWord || fd.data.typeRef == TypeRef.SecondWord || fd.data.typeRef == TypeRef.Undefined)
-      throw fail(s"double word value expected but ${fd}")
+  private[this] def requireDoubleWord(fi: FrameItem): Unit =
+    if (!fi.data.typeRef.isDoubleWord || fi.data.typeRef == TypeRef.SecondWord || fi.data.typeRef == TypeRef.Undefined)
+      throw fail(s"double word value expected but ${fi}")
 
   private[this] def requireStackTopType(f: Frame, t: TypeRef): Unit = t match {
     case t: TypeRef.DoubleWord =>
@@ -60,14 +62,14 @@ case class FrameUpdate(
       if(!t.isAssignableFrom(f.stack(0).data.typeRef)) throw fail(s"$t expected but ${f.stack(0).data.typeRef}")
   }
 
-  private[this] def makeSecondWord(fd: FrameItem): FrameItem =
-    FrameItem(DataLabel.out(s"second word of ${fd.label.name}"), fd.data.secondWordData)
+  private[this] def makeSecondWord(fi: FrameItem): FrameItem =
+    FrameItem(fi.source, fi.data.secondWordData)
 
   def pop(t: TypeRef): FrameUpdate =
     if (t.isDoubleWord) pop2()
     else pop1()
 
-  def pop(t: TypeRef, in: DataLabel.In): FrameUpdate =
+  def pop(t: TypeRef, in: DataPort.In): FrameUpdate =
     if (t.isDoubleWord) pop2(in)
     else pop1(in)
 
@@ -78,7 +80,7 @@ case class FrameUpdate(
     )
   }
 
-  def pop1(in: DataLabel.In): FrameUpdate = {
+  def pop1(in: DataPort.In): FrameUpdate = {
     requireSingleWord(newFrame.stackTop)
     val x = newFrame.stackTop
     pop0(in, x, newFrame.stack.drop(1))
@@ -91,7 +93,7 @@ case class FrameUpdate(
     copy(newFrame = newFrame.copy(stack = newFrame.stack.drop(2)))
   }
 
-  def pop2(in: DataLabel.In): FrameUpdate = {
+  def pop2(in: DataPort.In): FrameUpdate = {
     // TODO[BUG]: pop2 can pop 2 single word
     requireDoubleWord(newFrame.stack(0))
     requireSecondWord(newFrame.stack(1))
@@ -99,38 +101,34 @@ case class FrameUpdate(
     pop0(in, x, newFrame.stack.drop(2))
   }
 
-  private[this] def pop0(in: DataLabel.In, fi: FrameItem, stack: List[FrameItem]): FrameUpdate =
+  private[this] def pop0(in: DataPort.In, fi: FrameItem, stack: List[FrameItem]): FrameUpdate =
     FrameUpdate(
       label,
       bytecode,
       newFrame.copy(stack = stack),
-      binding + (in -> fi.label),
-      effectDependencies,
-      dataValues + (in -> fi)
+      frameItems + ((label ->in) -> fi)
     )
 
-  def push(d: FrameItem): FrameUpdate =
-    if (d.data.typeRef.isDoubleWord) push2(d)
-    else push1(d)
+  def push(p: Option[DataPort], d: FrameItem): FrameUpdate =
+    if (d.data.typeRef.isDoubleWord) push2(p, d)
+    else push1(p, d)
 
-  def push1(d: FrameItem): FrameUpdate = {
+  def push1(p: Option[DataPort], d: FrameItem): FrameUpdate = {
     requireSingleWord(d)
-    push0(d, d :: newFrame.stack)
+    push0(p, d, d :: newFrame.stack)
   }
 
-  def push2(d: FrameItem): FrameUpdate = {
+  def push2(p: Option[DataPort], d: FrameItem): FrameUpdate = {
     requireDoubleWord(d)
-    push0(d, d :: makeSecondWord(d) :: newFrame.stack)
+    push0(p, d, d :: makeSecondWord(d) :: newFrame.stack)
   }
 
-  private[this] def push0(d: FrameItem, stack: List[FrameItem]): FrameUpdate =
+  private[this] def push0(p: Option[DataPort], fi: FrameItem, stack: List[FrameItem]): FrameUpdate =
     FrameUpdate(
       label,
       bytecode,
       newFrame.copy(stack = stack),
-      binding,
-      effectDependencies,
-      dataValues + (d.label -> d)
+      p.fold(frameItems) { p => frameItems + ((label -> p) -> fi) }
     )
 
   def setLocal(n: Int, data: FrameItem): FrameUpdate = {
@@ -143,9 +141,7 @@ case class FrameUpdate(
       label,
       bytecode,
       newFrame.copy(locals = newFrame.locals.updated(n, data)),
-      binding,
-      effectDependencies,
-      dataValues
+      frameItems
     )
   }
 
@@ -160,8 +156,8 @@ case class FrameUpdate(
     newFrame.locals(n)
   }
 
-  def load1(n: Int): FrameUpdate = push1(local1(n))
-  def load2(n: Int): FrameUpdate = push2(local2(n))
+  def load1(n: Int): FrameUpdate = push1(None, local1(n))
+  def load2(n: Int): FrameUpdate = push2(None, local2(n))
 
   def store1(tpe: TypeRef.SingleWord, n: Int): FrameUpdate = {
     requireStackTopType(newFrame, tpe)
@@ -176,29 +172,29 @@ case class FrameUpdate(
       .pop2()
   }
 
-  def ret(retval: DataLabel.In): FrameUpdate = {
-    val d =
-      if (newFrame.stackTop.data.typeRef == TypeRef.SecondWord) newFrame.stack(1)
-      else newFrame.stackTop
+  def ret(retval: DataPort.In): FrameUpdate = {
+    val fi =
+      if (newFrame.stackTop.data.typeRef == TypeRef.SecondWord) {
+        requireDoubleWord(newFrame.stack(1))
+        newFrame.stack(1)
+      } else {
+        newFrame.stackTop
+      }
     FrameUpdate(
       label,
       bytecode,
-      Frame(Map.empty, List.empty, newFrame.effect),
-      binding + (retval -> d.label),
-      effectDependencies,
-      dataValues + (retval -> d)
+      Frame(Map.empty, List.empty),
+      frameItems + ((label -> retval) -> fi)
     )
   }
 
-  def athrow(objectref: DataLabel.In): FrameUpdate = {
+  def athrow(objectref: DataPort.In): FrameUpdate = {
     requireSingleWord(newFrame.stackTop)
     FrameUpdate(
       label,
       bytecode,
       newFrame.copy(stack = newFrame.stack.take(1)),
-      binding + (objectref -> newFrame.stack.head.label),
-      effectDependencies,
-      dataValues
+      frameItems
     )
   }
 }

@@ -7,7 +7,8 @@ import org.scalatest.{ FunSpec, Matchers, Failed }
 class Spec extends FunSpec with Matchers {
   def dotBody(filename: String, self: Instance[_ <: AnyRef], b: MethodBody): Unit = {
     import java.nio.file._
-    Files.write(Paths.get(filename), b.dataflow(self).toDot.getBytes("UTF-8"))
+    // TODO: DataFlow.toDot
+    // Files.write(Paths.get(filename), b.dataflow(self).toDot.getBytes("UTF-8"))
   }
 
   def withThe[A](i: Instance[_])(f: => A): A = {
@@ -30,7 +31,7 @@ class Spec extends FunSpec with Matchers {
         throw e
     }
     result match {
-      case Failed(t: BytecodeTransformException) =>
+      case Failed(t: UnveilException.HasMethodBody) =>
         println(s"=== FAILED($t)")
         println(t)
         println(t.methodBody.pretty)
@@ -64,9 +65,11 @@ class Spec extends FunSpec with Matchers {
 
       val intMethod = MethodRef.parse("intMethod()I", defaultCL)
       val longMethod = MethodRef.parse("longMethod()J", defaultCL)
-      val ri = i.duplicate[Const](el).materialized
-      ri.value.intMethod() should be(1)
-      ri.value.longMethod() should be(0L)
+      val ri = i.duplicate[Const](el)
+      withThe(ri) {
+        ri.materialized.value.intMethod() should be(1)
+        ri.materialized.value.longMethod() should be(0L)
+      }
     }
     it("invokeVirtual with no arguments") {
       class InvokeVirtual0 {

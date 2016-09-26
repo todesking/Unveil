@@ -9,6 +9,8 @@ sealed abstract class Data {
   def valueString: String
   def isInstance(instance: Instance[_ <: AnyRef]): Boolean = false
 
+  def merge(rhs: Data): Data = Data.merge(this, rhs)
+
   def secondWordData: Data =
     if (!typeRef.isDoubleWord) throw new IllegalArgumentException()
     else Data.Unsure(TypeRef.SecondWord)
@@ -33,7 +35,10 @@ object Data {
     }
   }
 
-  sealed abstract class Concrete extends Data {
+  sealed abstract class Known extends Data {
+  }
+
+  sealed abstract class Concrete extends Known {
     def concreteValue: Any
     override final def value = Some(concreteValue)
   }
@@ -41,6 +46,15 @@ object Data {
   case class Unsure(override val typeRef: TypeRef) extends Data {
     override def valueString = "???"
     override def value = None
+  }
+
+  case class Uninitialized(override val typeRef: TypeRef.Reference) extends Known {
+    override val valueString = s"new $typeRef(...)"
+    override val value = None
+    override def equals(rhs: Any): Boolean = rhs match {
+      case rhs: AnyRef => rhs eq this
+      case _ => false
+    }
   }
 
   case class Primitive(override val typeRef: TypeRef.Primitive, override val concreteValue: AnyVal) extends Concrete {

@@ -91,20 +91,19 @@ object Analyze {
           case (label, bc: ConstX) =>
           case (label, bc: Branch) if df.possibleReturns(body.jumpTargets(label -> bc.jumpTarget)).isEmpty || df.possibleReturns(df.fallThroughs(label)).isEmpty =>
           // OK if one of jumps exit by throw
-          case (label, bc @ invokespecial(classRef, methodRef)) if df.onlyValue(bc.objectref).map(_.isInstance(self)).getOrElse(false) && methodRef.isInit =>
+          case (label, bc @ invokespecial(classRef, methodRef)) if df.isThis(label, bc.objectref).getOrElse(false) && methodRef.isInit =>
             // super ctor invocation
             if (superConstructor.nonEmpty)
               throw makeError(s"Another constructor called twice in ${ctorClass}.<init>${body.descriptor}")
             superConstructor =
               SetterConstructor.from(self, classRef, self.methodBody(classRef, methodRef)).map(Some(_)).get
-          case (label, bc @ putfield(classRef, fieldRef)) if df.dataValue(bc.objectref).isInstance(self) =>
-            df.dataValue(bc.value).value.map { v =>
+          case (label, bc @ putfield(classRef, fieldRef)) if df.isThis(label, bc.objectref).getOrElse(false) =>
+            df.dataValue(label, bc.value).value.map { v =>
               // value from constant
               constAssigns += (classRef -> fieldRef) -> v
             } getOrElse {
-              val l = df.dataBinding(bc.value)
-              df.argNum(l).fold {
-                throw makeError(s"putfield non-argument/constant value(${df.dataValue(bc.value)}) is not acceptable: ${bc}")
+              df.argNum(label, bc.value).fold {
+                throw makeError(s"putfield non-argument/constant value(${df.dataValue(label, bc.value)}) is not acceptable: ${bc}")
               } { i =>
                 argAssigns += (classRef -> fieldRef) -> i
               }

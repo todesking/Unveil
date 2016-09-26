@@ -8,50 +8,53 @@ import scala.collection.mutable
 
 import java.lang.reflect.{ Method => JMethod, Constructor => JConstructor }
 
+// TODO: self: Option[Data.Reference] for static methods
 class DataFlow(val body: MethodBody, val self: Data.Reference) {
-  def possibleValues(l: DataLabel): Seq[Data] = l match {
-    case l: DataLabel.Out =>
-      dataMerges.get(l) map { ms =>
-        // TODO: Is this cause infinite loop?
-        ms.toSeq.flatMap { m => possibleValues(m) }
-      } getOrElse {
-        Seq(dataValue(l))
-      }
-    case l: DataLabel.In =>
-      possibleValues(dataBinding(l))
-  }
 
-  def onlyValue(l: DataLabel): Option[Data] = {
-    val pvs = possibleValues(l)
-    if (pvs.size == 1) Some(pvs.head)
+  // TODO: detailed values from merge
+  def possibleValues(l: Bytecode.Label, p: DataPort): Seq[Data] =
+    Seq(dataValues(l -> p))
+
+  def onlyValue(l: Bytecode.Label, p: DataPort): Option[Data.Known] = {
+    val pvs = possibleValues(l, p)
+    if (pvs.size == 1) Some(pvs.head).collect { case d: Data.Known => d }
     else None
   }
+
+  def dataSource(l: Bytecode.Label, p: DataPort): DataSource =
+    dataSources(l -> p)
+
+  def argNum(l: Bytecode.Label, p: DataPort): Option[Int] =
+    dataSources(l -> p) match {
+      case DataSource.Argument(n) => Some(n)
+      case _ => None
+    }
 
   // Some(true): data has single value that point the instance
   // Some(false): data is not point the instance
   // None: not sure
-  // TODO: check type
-  def isInstance(l: DataLabel, i: Instance[_ <: AnyRef]): Option[Boolean] =
-    onlyValue(l).map(_.isInstance(i)) orElse {
-      if (possibleValues(l).exists(_.isInstance(i))) None // TODO: make&use mayInstance()
-      else Some(false)
-    }
+  def isInstance(l: Bytecode.Label, p: DataPort, i: Instance[_ <: AnyRef]): Option[Boolean] =
+    if(!dataType(l, p).isAssignableFrom(TypeRef.Reference(i.thisRef))) Some(false)
+    else onlyValue(l, p).map(_.isInstance(i))
 
-  def isThis(l: DataLabel): Option[Boolean] =
-    isInstance(l, self.instance)
+  def mayInstance(l: Bytecode.Label, p: DataPort, i: Instance[_ <: AnyRef]): Boolean =
+    isInstance(l, p, i) != Some(false)
 
-  def mustThis(l: DataLabel): Boolean =
-    mustInstance(l, self.instance)
+  def isThis(l: Bytecode.Label, p: DataPort): Option[Boolean] =
+    isInstance(l, p, self.instance)
 
-  // TODO: refactor
-  def mustInstance(l: DataLabel, i: Instance[_ <: AnyRef], mr: MethodRef, bc: Bytecode): Boolean =
-    isInstance(l, i).fold {
+  def mustThis(l: Bytecode.Label, p: DataPort): Boolean =
+    mustInstance(l, p, self.instance)
+
+  // TODO: rm mr,bc
+  def mustInstance(l: Bytecode.Label, p: DataPort, i: Instance[_ <: AnyRef], mr: MethodRef, bc: Bytecode): Boolean =
+    isInstance(l, p, i).fold {
       throw new BytecodeTransformException(self.classRef, mr, body, bc, "Ambigious rererence")
     }(identity)
 
-  def mustInstance(l: DataLabel, i: Instance[_ <: AnyRef]): Boolean =
-    isInstance(l, i).fold {
-      throw new MethodBodyAnalyzeException(body, "Ambigious rererence")
+  def mustInstance(l: Bytecode.Label, p: DataPort, i: Instance[_ <: AnyRef]): Boolean =
+    isInstance(l, p, i).fold {
+      throw new MethodBodyAnalyzeException(body, s"Ambigious rererence: $l.$p")
     }(identity)
 
   def usedFieldsOf(i: Instance[_ <: AnyRef]): Set[(ClassRef, FieldRef)] =
@@ -59,37 +62,28 @@ class DataFlow(val body: MethodBody, val self: Data.Reference) {
       case (agg, (label, bc)) =>
         import Bytecode._
         bc match {
-          case bc: InstanceFieldAccess if mustInstance(bc.objectref, i) =>
+          case bc: InstanceFieldAccess if mustInstance(label, bc.objectref, i) =>
             agg + (i.resolveField(bc.classRef, bc.fieldRef) -> bc.fieldRef)
           case _ => agg
         }
     }
 
+  // TODO: DirectUsedMethod
   def usedMethodsOf(i: Instance[_ <: AnyRef]): Set[(ClassRef, MethodRef)] =
     body.bytecode.foldLeft(Set.empty[(ClassRef, MethodRef)]) {
       case (agg, (label, bc)) =>
         import Bytecode._
         bc match {
-          case bc @ invokevirtual(cr, mr) if mustInstance(bc.objectref, i) =>
+          case bc @ invokevirtual(cr, mr) if mayInstance(label, bc.objectref, i) =>
             agg + (i.resolveVirtualMethod(mr) -> mr)
-          case bc @ invokeinterface(cr, mr, _) if mustInstance(bc.objectref, i) =>
+          case bc @ invokeinterface(cr, mr, _) if mayInstance(label, bc.objectref, i) =>
             agg + (i.resolveVirtualMethod(mr) -> mr)
-          case bc @ invokespecial(cr, mr) if mustInstance(bc.objectref, i) =>
+          case bc @ invokespecial(cr, mr) if mayInstance(label, bc.objectref, i) =>
             // TODO: Special method resolution
             agg + (cr -> mr)
           case _ => agg
         }
     }
-
-  lazy val argLabels: Seq[DataLabel.Out] =
-    body.descriptor.args
-      .zipWithIndex
-      .map { case (t, i) => DataLabel.out(s"arg_${i}") }
-
-  def argNum(label: DataLabel.Out): Option[Int] = {
-    val index = argLabels.indexOf(label)
-    if (index == -1) None else Some(index)
-  }
 
   def possibleReturns(l: Bytecode.Label): Seq[Bytecode.Return] =
     possibleExits(l).collect { case bc: Bytecode.Return => bc }
@@ -125,113 +119,26 @@ class DataFlow(val body: MethodBody, val self: Data.Reference) {
         case _ => Set.empty
       })
 
-  lazy val thisLabel: Option[DataLabel.Out] = if (body.isStatic) None else Some(DataLabel.out("this"))
-
   lazy val initialFrame: Frame = {
-    val initialEffect = Effect.fresh()
-    val thisData = thisLabel.map { l => FrameItem(l, self) }
-    val argData = body.descriptor.args.zipWithIndex.zip(argLabels).flatMap {
-      case ((t, i), label) =>
+    val thisData = if (body.isStatic) None else Some(FrameItem(DataSource.This, self))
+    val argData = body.descriptor.args.zipWithIndex.flatMap {
+      case (t, i) =>
+        val source = DataSource.Argument(i)
         val data = Data.Unsure(t)
         if (t.isDoubleWord)
           Seq(
-            FrameItem(label, data),
-            FrameItem(
-              DataLabel.out(s"second word of ${label.name}"),
-              data.secondWordData
-            )
+            FrameItem(source, data),
+            FrameItem(source, data.secondWordData)
           )
         else
-          Seq(FrameItem(label, data))
+          Seq(FrameItem(source, data))
     }
-    Frame((thisData.toSeq ++ argData).zipWithIndex.map(_.swap).toMap, List.empty, initialEffect)
+    Frame((thisData.toSeq ++ argData).zipWithIndex.map(_.swap).toMap, List.empty)
   }
-  def dataValue(l: DataLabel): Data =
-    dataValues(l)
+  def dataValue(l: Bytecode.Label, p: DataPort): Data =
+    dataValues(l -> p)
 
-  def dataType(l: DataLabel): TypeRef = dataValues(l).typeRef
-
-  def toDot(): String = {
-    import Graphviz._
-    val bcLabelFormat = "L%d"
-    val dName = DataLabel.namer("data_", "")
-    val eName = Effect.namer("effect_", "Eff#")
-    s"""digraph {
-graph[rankdir="BT"]
-start[label="start" shape="doublecircle"]
-${body.bytecode.head._1.format(bcLabelFormat)} -> start
-${eName.id(initialFrame.effect)} -> start [style="dotted"]
-    ${
-      body.bytecode.map {
-        case (label, bc) =>
-          drawNode(label.format(bcLabelFormat), 'label -> bc.pretty, 'shape -> "rectangle")
-      }.mkString("\n")
-    }
-    ${
-      fallThroughs.map {
-        case (src, d) =>
-          drawEdge(d.format(bcLabelFormat), src.format(bcLabelFormat))
-      }.mkString("\n")
-    }
-    ${
-      body.bytecode.flatMap {
-        case (label, bc: Bytecode.Jump) =>
-          Seq(drawEdge(body.jumpTargets(label -> bc.target).format(bcLabelFormat), label.format(bcLabelFormat)))
-        case (label, bc: Bytecode.Branch) =>
-          Seq(drawEdge(body.jumpTargets(label -> bc.target).format(bcLabelFormat), label.format(bcLabelFormat), 'label -> "then"))
-        case _ =>
-          Seq.empty
-      }.mkString("\n")
-    }
-    ${
-      dataValues.collect {
-        case (l: DataLabel.Out, data) =>
-          drawNode(dName.id(l), 'label -> s"${l.name}: ${data}")
-      }.mkString("\n")
-    }
-    ${
-      body.bytecode.flatMap {
-        case (label, bc) =>
-          bc.inputs.flatMap { i =>
-            dataBinding.get(i).map(i -> _)
-          }.map {
-            case (i, o) =>
-              drawEdge(label.format(bcLabelFormat), dName.id(o), 'style -> "dotted", 'label -> i.name)
-          }
-      }.mkString("\n")
-    }
-    ${
-      body.bytecode.flatMap { case (label, bc) => bc.output.map { o => label -> (bc -> o) } }.map {
-        case (label, (bc, o)) =>
-          drawEdge(dName.id(o), label.format(bcLabelFormat), 'style -> "dotted", 'label -> o.name)
-      }.mkString("\n")
-    }
-    ${
-      dataMerges.flatMap {
-        case (m, ds) =>
-          ds.map { d => drawEdge(dName.id(m), dName.id(d), 'style -> "dotted") }
-      }.mkString("\n")
-    }
-    ${
-      effectMerges.flatMap {
-        case (m, es) =>
-          es.map { e => drawEdge(eName.id(m), eName.id(e), 'style -> "dotted") }
-      }.mkString("\n")
-    }
-    ${
-      effectDependencies.map {
-        case (bcl, e) =>
-          drawEdge(bcl.format(bcLabelFormat), eName.id(e), 'style -> "dotted")
-      }.mkString("\n")
-    }
-    ${
-      body.bytecode.flatMap { case (label, bc) => bc.effect.map { eff => label -> (bc -> eff) } }.map {
-        case (label, (bc, eff)) =>
-          drawEdge(eName.id(eff), label.format(bcLabelFormat), 'style -> "dotted")
-      }.mkString("\n")
-    }
-}"""
-  }
+  def dataType(l: Bytecode.Label, p: DataPort): TypeRef = dataValue(l, p).typeRef
 
   lazy val fallThroughs: Map[Bytecode.Label, Bytecode.Label] = {
     import Bytecode._
@@ -245,27 +152,21 @@ ${eName.id(initialFrame.effect)} -> start [style="dotted"]
 
   // Yes I know this is just a pattern matching, not type-annotation. But I need readability
   lazy val (
-    dataBinding: Map[DataLabel.In, DataLabel.Out],
-    dataValues: Map[DataLabel, Data],
-    dataMerges: Map[DataLabel.Out, Set[DataLabel.Out]],
-    effectDependencies: Map[Bytecode.Label, Effect],
-    effectMerges: Map[Effect, Set[Effect]],
-    liveBytecode: Seq[Bytecode],
+    dataValues: Map[(Bytecode.Label, DataPort), Data],
     maxLocals: Int,
     maxStackDepth: Int,
-    beforeFrames: Map[Bytecode.Label, Frame]
+    beforeFrames: Map[Bytecode.Label, Frame],
+    dataSources: Map[(Bytecode.Label, DataPort), DataSource]
     ) = {
-    val dataMerges = new AbstractLabel.Merger[DataLabel.Out](DataLabel.out("merged"))
     val effectMerges = new AbstractLabel.Merger[Effect](Effect.fresh())
     def mergeData(d1: FrameItem, d2: FrameItem): FrameItem =
-      FrameItem(dataMerges.merge(d1.label, d2.label), Data.merge(d1.data, d2.data)) // TODO: record placedBy merge
+      d1.merge(d2)
     def merge(f1: Frame, f2: Frame): Frame = {
       Frame(
         (f1.locals.keySet ++ f2.locals.keySet)
         .filter { k => f1.locals.contains(k) && f2.locals.contains(k) }
         .map { k => (k -> mergeData(f1.locals(k), f2.locals(k))) }.toMap,
-        f1.stack.zip(f2.stack).map { case (a, b) => mergeData(a, b) },
-        effectMerges.merge(f1.effect, f2.effect)
+        f1.stack.zip(f2.stack).map { case (a, b) => mergeData(a, b) }
       )
     }
 
@@ -310,33 +211,22 @@ ${eName.id(initialFrame.effect)} -> start [style="dotted"]
       }
     }
 
-    val dataValues = mutable.HashMap.empty[DataLabel, Data]
-    (preFrames.values.toSeq :+ initialFrame) foreach { frame =>
-      (frame.locals.values ++ frame.stack) foreach { d =>
-        dataValues(d.label) = d.data
-      }
-    }
-    val binding = mutable.HashMap.empty[DataLabel.In, DataLabel.Out]
-    val effectDependencies = mutable.HashMap.empty[Bytecode.Label, Effect]
-    updates.values foreach { u =>
-      dataValues ++= u.dataValues.mapValues(_.data)
-      binding ++= u.binding
-      effectDependencies ++= u.effectDependencies
-    }
 
     val allFrames = preFrames.values ++ updates.values.map(_.newFrame)
     val maxLocals = allFrames.flatMap(_.locals.keys).max + 1
     val maxStackDepth = allFrames.map(_.stack.size).max
+    val dataValues = updates.values.flatMap(_.dataValues).toMap
+    val dataSources = updates.values.flatMap(_.dataSources).toMap
 
-    (binding.toMap, dataValues.toMap, dataMerges.toMap, effectDependencies.toMap, effectMerges.toMap, liveBcs.values.toSeq, maxLocals, maxStackDepth, preFrames.toMap)
+    (dataValues, maxLocals, maxStackDepth, preFrames.toMap, dataSources)
   }
 
   def pretty: String = {
     val format = "L%03d"
-    def formatData(l: DataLabel, d: Data): String = {
+    def formatData(l: Bytecode.Label, p: DataPort, d: Data): String = {
       val typeStr = if (d.typeRef == self.typeRef) "this.class" else d.typeRef.toString
       val data = s"$typeStr = ${d.valueString}"
-      isThis(l).fold {
+      isThis(l, p).fold {
         s"$data(this?)"
       } { yes =>
         if (yes) s"this"
@@ -346,8 +236,8 @@ ${eName.id(initialFrame.effect)} -> start [style="dotted"]
     body.bytecode.map {
       case (label, bc) =>
         val base = s"${label.format(format)} ${bc.pretty}"
-        val in = bc.inputs.map { in => s"  # ${in.name}: ${possibleValues(in).map(formatData(in, _)).mkString(", ")}" }
-        val out = bc.output.map { out => s"  # ${out.name}: ${possibleValues(out).map(formatData(out, _)).mkString(", ")}" }.toSeq
+        val in = bc.inputs.map { in => s"  # ${in.name}: ${possibleValues(label, in).map(formatData(label, in, _)).mkString(", ")}" }
+        val out = bc.output.map { out => s"  # ${out.name}: ${possibleValues(label, out).map(formatData(label, out, _)).mkString(", ")}" }.toSeq
         (Seq(base) ++ in ++ out).mkString("\n")
     }.mkString("\n")
   }
