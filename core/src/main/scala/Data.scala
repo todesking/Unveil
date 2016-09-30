@@ -49,12 +49,24 @@ object Data {
   }
 
   case class Uninitialized(override val typeRef: TypeRef.Reference) extends Known {
-    override val valueString = s"new $typeRef(...)"
+    override val valueString = s"new $typeRef(uninitialized)"
     override val value = None
     override def equals(rhs: Any): Boolean = rhs match {
       case rhs: AnyRef => rhs eq this
       case _ => false
     }
+  }
+  case class Initialized(override val typeRef: TypeRef.Reference, constructor: MethodRef) extends Known {
+    override val valueString = s"new $typeRef(${constructor.args.mkString(", ")})"
+    override val value = None
+    override def equals(rhs: Any): Boolean = rhs match {
+      case rhs: AnyRef => rhs eq this
+      case _ => false
+    }
+    def fields: Set[(ClassRef, FieldRef)] = ???
+    def constructorDataFlow: DataFlow = ???
+    lazy val escaped: Boolean = ???
+    def methodSSA(cr: ClassRef, mr: MethodRef): DataFlow.SSA = ???
   }
 
   case class Primitive(override val typeRef: TypeRef.Primitive, override val concreteValue: AnyVal) extends Concrete {

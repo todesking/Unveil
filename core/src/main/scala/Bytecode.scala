@@ -61,12 +61,12 @@ object Bytecode {
   sealed trait FallThrough extends Bytecode
 
   sealed abstract class Control extends Bytecode
+  sealed abstract class Procedure extends Bytecode with FallThrough
   sealed abstract class Shuffle extends Bytecode with FallThrough {
     override type Self <: Shuffle
     override final def inputs = Seq.empty
     override final def output: Option[DataPort.Out] = None
   }
-  sealed abstract class Procedure extends Bytecode with FallThrough
 
   sealed trait HasClassRef extends Bytecode {
     def classRef: ClassRef
@@ -119,10 +119,10 @@ object Bytecode {
   sealed abstract class Throw extends Exit
 
   sealed abstract class XReturn extends Return {
-    val in: DataPort.In = DataPort.In("retval")
-    override final val inputs = Seq(in)
+    val retval: DataPort.In = DataPort.In("retval")
+    override final val inputs = Seq(retval)
     override final def output = None
-    override final def nextFrame(l: Bytecode.Label, f: Frame) = update(l, f).ret(in)
+    override final def nextFrame(l: Bytecode.Label, f: Frame) = update(l, f).ret(retval)
     def returnType: TypeRef.Public
   }
   // Void return
@@ -173,13 +173,13 @@ object Bytecode {
   sealed abstract class Const1 extends ConstX {
     final val out: DataPort.Out = DataPort.Out("const(1word)")
     override def nextFrame(l: Bytecode.Label, f: Frame) =
-      update(l, f).push1(output, FrameItem(DataSource.Bytecode(l, this), data))
+      update(l, f).push1(output, FrameItem(DataSource.Bytecode(l, out), data))
   }
 
   sealed abstract class Const2 extends ConstX {
     final val out: DataPort.Out = DataPort.Out("const(2word)")
     override def nextFrame(l: Bytecode.Label, f: Frame) =
-      update(l, f).push2(output, FrameItem(DataSource.Bytecode(l, this), data))
+      update(l, f).push2(output, FrameItem(DataSource.Bytecode(l, out), data))
   }
 
   sealed abstract class InvokeMethod extends Procedure with HasClassRef with HasMethodRef {
@@ -200,7 +200,7 @@ object Bytecode {
             else u.pop1(a)
         }
       ret.fold(popped) { rlabel =>
-        popped.push(Some(rlabel), FrameItem(DataSource.Bytecode(l, this), Data.Unsure(methodRef.ret)))
+        popped.push(Some(rlabel), FrameItem(DataSource.Bytecode(l, rlabel), Data.Unsure(methodRef.ret)))
       }
     }
   }
@@ -217,9 +217,10 @@ object Bytecode {
             else u.pop1(a)
         }.pop1(objectref)
       ret.fold(popped) { rlabel =>
-        popped.push(Some(rlabel), FrameItem(DataSource.Bytecode(l, this), Data.Unsure(methodRef.ret)))
+        popped.push(Some(rlabel), FrameItem(DataSource.Bytecode(l, rlabel), Data.Unsure(methodRef.ret)))
       }
     }
+    def resolveMethod(instance: Instance[_ <: AnyRef]): ClassRef = ???
   }
 
   sealed abstract class FieldAccess extends Procedure with HasClassRef with HasFieldRef {
@@ -231,6 +232,14 @@ object Bytecode {
   sealed abstract class InstanceFieldAccess extends FieldAccess {
     override type Self <: InstanceFieldAccess
     val objectref: DataPort.In = DataPort.In("objectref")
+  }
+  sealed trait FieldSetter extends FieldAccess {
+    final val value = DataPort.In("value")
+    final override def output = None
+  }
+  sealed trait FieldGetter extends FieldAccess {
+    final val out = DataPort.Out("out")
+    final override def output = Some(out)
   }
 
   case class nop() extends Shuffle {
@@ -307,7 +316,6 @@ object Bytecode {
   case class areturn() extends XReturn {
     override type Self = areturn
     override def returnType = TypeRef.Reference(ClassRef.Object)
-    def objectref: DataPort.In = in
   }
   case class iconst(value: Int) extends Const1 {
     override type Self = iconst
@@ -362,9 +370,9 @@ object Bytecode {
             .pop(operandType, value2)
             .pop(operandType, value1)
             .push(
-              output,
+              Some(result),
               FrameItem(
-                DataSource.Bytecode(l, this),
+                DataSource.Bytecode(l, result),
                 d1.data.value.flatMap { v1 =>
                   d2.data.value.map { v2 =>
                     Data.Primitive(
@@ -393,9 +401,9 @@ object Bytecode {
       update(l, f)
         .pop(operandType)
         .push(
-          output,
+          Some(result),
           FrameItem(
-            DataSource.Bytecode(l, this),
+            DataSource.Bytecode(l, result),
             f.stackTop.data.value.map { v =>
               Data.Primitive(resultType, op(v.asInstanceOf[A]))
             }.getOrElse { Data.Unsure(resultType) }
@@ -469,15 +477,14 @@ object Bytecode {
     override def withNewMehtodRef(newRef: MethodRef) = copy(methodRef = newRef)
     override def pretty = s"invokestatic ${classRef.pretty}.${methodRef.str}"
   }
-  case class getfield(override val classRef: ClassRef, override val fieldRef: FieldRef) extends InstanceFieldAccess {
+  case class getfield(override val classRef: ClassRef, override val fieldRef: FieldRef) extends InstanceFieldAccess with FieldGetter {
     override type Self = getfield
     override def withNewClassRef(newRef: ClassRef) = copy(classRef = newRef)
     override def withNewFieldRef(newRef: FieldRef) = copy(fieldRef = newRef)
 
-    val out = DataPort.Out("field")
-    override def pretty = s"getfield ${classRef}.${fieldRef}"
     override def inputs = Seq(objectref)
-    override def output = Some(out)
+
+    override def pretty = s"getfield ${classRef}.${fieldRef}"
     override def nextFrame(l: Bytecode.Label, f: Frame) = {
       val self = f.stack(0).data
       val data =
@@ -492,28 +499,25 @@ object Bytecode {
       update(l, f).pop1(objectref).push(output, FrameItem(DataSource.Field(classRef, fieldRef), data))
     }
   }
-  case class getstatic(override val classRef: ClassRef, override val fieldRef: FieldRef) extends StaticFieldAccess {
+  case class getstatic(override val classRef: ClassRef, override val fieldRef: FieldRef) extends StaticFieldAccess with FieldGetter {
     override type Self = getstatic
     override def withNewClassRef(newRef: ClassRef) = copy(classRef = newRef)
     override def withNewFieldRef(newRef: FieldRef) = copy(fieldRef = newRef)
 
-    val out = DataPort.Out("field")
+    override def inputs = Seq()
+
     override def pretty = s"getstatic ${fieldRef}"
-    override def inputs = Seq.empty
-    override def output = Some(out)
     override def nextFrame(l: Bytecode.Label, f: Frame) = {
       val data = Data.Unsure(fieldRef.descriptor.typeRef) // TODO: set static field value if it is final
       update(l, f).push(output, FrameItem(DataSource.Field(classRef, fieldRef), data))
     }
   }
-  case class putfield(override val classRef: ClassRef, override val fieldRef: FieldRef) extends InstanceFieldAccess {
+  case class putfield(override val classRef: ClassRef, override val fieldRef: FieldRef) extends InstanceFieldAccess with FieldSetter {
     override type Self = putfield
     override def withNewClassRef(newRef: ClassRef) = copy(classRef = newRef)
     override def withNewFieldRef(newRef: FieldRef) = copy(fieldRef = newRef)
-    val value = DataPort.In("value")
-    override def pretty = s"putfield ${classRef}.${fieldRef}"
     override def inputs = Seq(objectref)
-    override def output = None
+    override def pretty = s"putfield ${classRef}.${fieldRef}"
     override def nextFrame(l: Bytecode.Label, f: Frame) =
       update(l, f).pop(fieldRef.descriptor.typeRef, value).pop1(objectref)
   }
@@ -533,6 +537,6 @@ object Bytecode {
     override def inputs = Seq()
     override def output = Some(objectref)
     override def nextFrame(l: Bytecode.Label, f: Frame) =
-      update(l, f).push(output, FrameItem(DataSource.Bytecode(l, this), Data.Uninitialized(TypeRef.Reference(classRef))))
+      update(l, f).push(output, FrameItem(DataSource.Bytecode(l, objectref), Data.Uninitialized(TypeRef.Reference(classRef))))
   }
 }

@@ -21,6 +21,9 @@ class CodeFragment(val bytecodeSeq: Seq[Bytecode], val jumpTargets: Map[(Bytecod
   def jumpDestination(bcl: Bytecode.Label, jt: JumpTarget): Bytecode.Label =
     jumpTargets(bcl -> jt)
 
+  def bytecodeFromLabel(l: Bytecode.Label): Bytecode =
+    labelToBytecode(l)
+
   def pretty: String =
     s"""${
       bytecode.map {

@@ -18,6 +18,9 @@ case class MethodBody(
   private[this] def require(cond: Boolean, detail: => String = ""): Unit =
     MethodBody.require(this, cond, detail)
 
+  def bytecodeFromLabel(l: Bytecode.Label): Bytecode =
+    codeFragment.bytecodeFromLabel(l)
+
   def jumpTargets: Map[(Bytecode.Label, JumpTarget), Bytecode.Label] =
     codeFragment.jumpTargets
 

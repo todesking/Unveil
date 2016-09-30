@@ -88,6 +88,8 @@ sealed abstract class Instance[A <: AnyRef] {
   }
 
   def pretty: String
+
+  def methodSSA(cr: ClassRef, mr: MethodRef): DataFlow.SSA = ???
 }
 object Instance {
   def of[A <: AnyRef](value: A): Original[A] = Original(value)

@@ -384,6 +384,18 @@ class Spec extends FunSpec with Matchers {
         val x = Instance.of(new A(1)).duplicate[A](el)
         x.materialized.value.foo.value should be(2)
       }
+      it("inline local instance") {
+        class A(val value: Int) {
+          def foo(): Int = new A(2).value + value
+        }
+        val i = Instance.of(new A(1))
+        val ri = Transformer.localInstanceInlining(i, el).get
+        withThe(ri) {
+          ri.materialized.value.foo() should be(3)
+          ri.methodBody(MethodRef.parse("foo()I", defaultCL))
+            .bytecode.collect { case x@(l, Bytecode.new_(_)) => x } should be('empty)
+        }
+      }
     }
 
     it("double values") {
