@@ -200,7 +200,7 @@ object Bytecode {
             else u.pop1(a)
         }
       ret.fold(popped) { rlabel =>
-        popped.push(Some(rlabel), FrameItem(DataSource.Bytecode(l, rlabel), Data.Unsure(methodRef.ret)))
+        popped.push(Some(rlabel), FrameItem(DataSource.Bytecode(l, rlabel), Data.Unknown(methodRef.ret)))
       }
     }
   }
@@ -217,7 +217,7 @@ object Bytecode {
             else u.pop1(a)
         }.pop1(objectref)
       ret.fold(popped) { rlabel =>
-        popped.push(Some(rlabel), FrameItem(DataSource.Bytecode(l, rlabel), Data.Unsure(methodRef.ret)))
+        popped.push(Some(rlabel), FrameItem(DataSource.Bytecode(l, rlabel), Data.Unknown(methodRef.ret)))
       }
     }
     def resolveMethod(instance: Instance[_ <: AnyRef]): ClassRef = ???
@@ -319,11 +319,11 @@ object Bytecode {
   }
   case class iconst(value: Int) extends Const1 {
     override type Self = iconst
-    override def data = Data.Primitive(TypeRef.Int, value)
+    override def data = Data.ConcretePrimitive(TypeRef.Int, value)
   }
   case class lconst(value: Long) extends Const2 {
     override type Self = lconst
-    override def data = Data.Primitive(TypeRef.Long, value)
+    override def data = Data.ConcretePrimitive(TypeRef.Long, value)
   }
   case class aconst_null() extends Const1 {
     override type Self = aconst_null
@@ -331,7 +331,7 @@ object Bytecode {
   }
   case class ldc2_double(value: Double) extends Const2 {
     override type Self = ldc2_double
-    override def data = Data.Primitive(TypeRef.Double, value)
+    override def data = Data.ConcretePrimitive(TypeRef.Double, value)
   }
   case class goto(override val jumpTarget: JumpTarget) extends Jump {
     override type Self = goto
@@ -375,12 +375,12 @@ object Bytecode {
                 DataSource.Bytecode(l, result),
                 d1.data.value.flatMap { v1 =>
                   d2.data.value.map { v2 =>
-                    Data.Primitive(
+                    Data.ConcretePrimitive(
                       operandType,
                       op(v1.asInstanceOf[A], v2.asInstanceOf[A])
                     )
                   }
-                }.getOrElse { Data.Unsure(operandType) }
+                }.getOrElse { Data.Unknown(operandType) }
               )
             )
         case (d1, d2) => throw new AnalyzeException(s"$this: Type error: ${(d1, d2)}")
@@ -405,8 +405,8 @@ object Bytecode {
           FrameItem(
             DataSource.Bytecode(l, result),
             f.stackTop.data.value.map { v =>
-              Data.Primitive(resultType, op(v.asInstanceOf[A]))
-            }.getOrElse { Data.Unsure(resultType) }
+              Data.ConcretePrimitive(resultType, op(v.asInstanceOf[A]))
+            }.getOrElse { Data.Unknown(resultType) }
           )
         )
     }
@@ -489,12 +489,12 @@ object Bytecode {
       val self = f.stack(0).data
       val data =
         self match {
-          case Data.Reference(_, instance) =>
+          case Data.ConcreteReference(instance) =>
             val field = instance.fields(instance.resolveField(classRef, fieldRef) -> fieldRef)
             if (field.isFinal) field.data
-            else Data.Unsure(fieldRef.descriptor.typeRef)
+            else Data.Unknown(fieldRef.descriptor.typeRef)
           case _ =>
-            Data.Unsure(fieldRef.descriptor.typeRef)
+            Data.Unknown(fieldRef.descriptor.typeRef)
         }
       update(l, f).pop1(objectref).push(output, FrameItem(DataSource.Field(classRef, fieldRef), data))
     }
@@ -508,7 +508,7 @@ object Bytecode {
 
     override def pretty = s"getstatic ${fieldRef}"
     override def nextFrame(l: Bytecode.Label, f: Frame) = {
-      val data = Data.Unsure(fieldRef.descriptor.typeRef) // TODO: set static field value if it is final
+      val data = Data.Unknown(fieldRef.descriptor.typeRef) // TODO: set static field value if it is final
       update(l, f).push(output, FrameItem(DataSource.Field(classRef, fieldRef), data))
     }
   }

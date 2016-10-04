@@ -18,7 +18,7 @@ object UnveilException {
 
 class MaterializeException(msg: String, err: Throwable) extends UnveilException(msg, err)
 
-class InvalidClassException(val instance: Instance.Duplicate[_], err: LinkageError)
+class InvalidClassException(val klass: Klass, err: LinkageError)
   extends MaterializeException(err.toString, err)
 
 class AnalyzeException(msg: String) extends UnveilException(msg)

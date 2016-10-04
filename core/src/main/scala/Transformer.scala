@@ -52,8 +52,8 @@ object Transformer {
           .keySet
           .filterNot { mr => dupInstance.resolveVirtualMethod(mr) == ClassRef.Object }
           .map { mr => dupInstance.resolveVirtualMethod(mr) -> mr } ++ (
-            dupInstance
-            .thisMethods
+            dupInstance.klass
+            .declaredMethods
             .keySet
             .map { mr => dupInstance.thisRef -> mr }
           ),
@@ -84,12 +84,12 @@ object Transformer {
           el.enterField(fcr, fr) { el =>
             self.fields(fcr -> fr).data match {
               // TODO[refactor]: instance.isInstanceStateful
-              case Data.Reference(t, fieldInstance) if !fieldInstance.fields.forall(_._2.attribute.isFinal) =>
+              case Data.ConcreteReference(fieldInstance) if !fieldInstance.fields.forall(_._2.attribute.isFinal) =>
                 el.log("Pass: This field is instance-stateful")
                 self
-              case Data.Reference(t, fieldInstance) =>
+              case Data.ConcreteReference(fieldInstance) =>
                 // TODO: log
-                val usedMethods = fieldInstance.extendMethods(
+                val usedMethods = fieldInstance.klass.extendMethods(
                   methods.flatMap {
                     case (cr, mr) =>
                       self.dataflow(cr, mr).usedMethodsOf(fieldInstance)
@@ -203,13 +203,13 @@ object Transformer {
                   // TODO[BUG]: resolve special
                   cr
                 case invokevirtual(cr, mr) =>
-                  df.self.instance.resolveVirtualMethod(mr)
+                  df.klass.resolveVirtualMethod(mr)
                 case invokeinterface(cr, mr, _) =>
-                  df.self.instance.resolveVirtualMethod(mr)
+                  df.klass.resolveVirtualMethod(mr)
               }
             val calleeDf =
-              if (ignore.contains(cr -> mr)) df.self.instance.dataflow(cr, mr)
-              else inline(df.self.instance.dataflow(cr, mr), ignore + (cr -> mr), el).dataflow(df.self.instance)
+              if (ignore.contains(cr -> mr)) df.klass.dataflow(cr, mr)
+              else inline(df.klass.dataflow(cr, mr), ignore + (cr -> mr), el).dataflow(df.klass)
 
             // TODO[BUG]: if(calleeDf.localModified(0)) ...
             val argOffset = if (calleeDf.body.isStatic) localOffset else localOffset + 1
@@ -268,15 +268,17 @@ object Transformer {
 
     private[this] def inline(df: DataFlow, el: EventLogger): MethodBody = {
       val ssa = df.toSSA
-      import DataFlow.SSA.{Instruction => I, ValueLabel}
+      import DataFlow.SSA.{ Instruction => I, ValueLabel }
       import DataFlow.SSA
       import Bytecode._
       // TODO: check all method is inlinable
-      val nonEscapes: Map[ValueLabel, (Data.Initialized, Map[(ClassRef, FieldRef), ValueLabel])] =
+      val nonEscapes: Map[ValueLabel, (Instance.New[AnyRef], Map[(ClassRef, FieldRef), ValueLabel])] =
+        // TODO: check used method only in d.escaped
         ssa.newInstances
           .filter { case (v, d) => !ssa.escaped(v) && !d.escaped }
-          .map { case (v, d) =>
-            v -> (d -> d.fields.map { f => f -> ValueLabel.fresh() }.toMap)
+          .map {
+            case (v, d) =>
+              v -> (d -> d.fields.keys.map { f => f -> ValueLabel.fresh() }.toMap)
           }
       def toInlineForm(
         base: SSA,
@@ -285,42 +287,30 @@ object Transformer {
       ): SSA =
         base
           .rewrite {
-            case (l, I.Procedure(Some(out), Seq(objectref), getfield(cr, fr)))
-            if base.mustThis(objectref) =>
+            case (l, I.Procedure(Some(out), Seq(objectref), getfield(cr, fr))) if base.mustThis(objectref) =>
               SSA.bind(out, fieldMap((cr -> fr)))
-            case (l, I.Procedure(None, Seq(objectref, value), putfield(cr,fr)))
-            if base.mustThis(objectref) =>
+            case (l, I.Procedure(None, Seq(objectref, value), putfield(cr, fr))) if base.mustThis(objectref) =>
               SSA.bind(fieldMap((cr -> fr)), value)
-            case (l, I.Procedure(out, Seq(objectref, args @ _*), bc: InvokeInstanceMethod))
-            if base.mustThis(objectref) =>
+            case (l, I.Procedure(out, Seq(objectref, args @ _*), bc: InvokeInstanceMethod)) if base.mustThis(objectref) =>
               val cr = bc.resolveMethod(???)
-              if(inlined.contains(cr -> bc.methodRef))
+              if (inlined.contains(cr -> bc.methodRef))
                 throw new RuntimeException("recursive method not supported")
               toInlineForm(base.instance.methodSSA(cr, bc.methodRef), fieldMap, inlined + (cr -> bc.methodRef))
                 .bindArgs(args)
           }
       ssa.rewrite {
-        case (l, I.Procedure(Some(out), Seq(), bc@new_(cr)))
-        if nonEscapes.contains(out) =>
+        case (l, I.Procedure(Some(out), Seq(), bc @ new_(cr))) if nonEscapes.contains(out) =>
           // inline ctor
           val (newInstance, fieldMap) = nonEscapes(out)
-          toInlineForm(
-            newInstance
-              .constructorDataFlow
-              .toSSA,
-            fieldMap
-          )
-        case (l, I.Procedure(outOpt, Seq(objectref, args @ _*), bc: InvokeInstanceMethod))
-        if nonEscapes.contains(objectref) =>
+          toInlineForm(newInstance.constructorSSA, fieldMap)
+        case (l, I.Procedure(outOpt, Seq(objectref, args @ _*), bc: InvokeInstanceMethod)) if nonEscapes.contains(objectref) =>
           // inline method
           val (newInstance, fieldMap) = nonEscapes(objectref)
-          toInlineForm(newInstance.methodSSA(bc.resolveMethod(???), bc.methodRef),fieldMap)
-        case (l, I.Procedure(Some(out), Seq(objectref), getfield(cr, fr)))
-        if nonEscapes.contains(objectref) =>
+          toInlineForm(newInstance.methodSSA(bc.resolveMethod(???), bc.methodRef), fieldMap)
+        case (l, I.Procedure(Some(out), Seq(objectref), getfield(cr, fr))) if nonEscapes.contains(objectref) =>
           val (newInstance, fieldMap) = nonEscapes(objectref)
           SSA.bind(out, fieldMap(cr -> fr))
-        case (l, I.Procedure(None, Seq(objectref, value), putfield(cr, fr)))
-        if nonEscapes.contains(objectref) =>
+        case (l, I.Procedure(None, Seq(objectref, value), putfield(cr, fr))) if nonEscapes.contains(objectref) =>
           val (newInstance, fieldMap) = nonEscapes(objectref)
           SSA.bind(fieldMap(cr -> fr), value)
       }.methodBody

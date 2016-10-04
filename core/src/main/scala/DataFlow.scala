@@ -8,8 +8,7 @@ import scala.collection.mutable
 
 import java.lang.reflect.{ Method => JMethod, Constructor => JConstructor }
 
-// TODO: self: Option[Data.Reference] for static methods
-class DataFlow(val body: MethodBody, val self: Data.Reference) {
+class DataFlow(val body: MethodBody, val klass: Klass, val fieldValues: Map[(ClassRef, FieldRef), Data]) {
 
   // TODO: detailed values from merge
   def possibleValues(l: Bytecode.Label, p: DataPort): Seq[Data] =
@@ -52,36 +51,39 @@ class DataFlow(val body: MethodBody, val self: Data.Reference) {
   // Some(false): data is not point the instance
   // None: not sure
   def isInstance(l: Bytecode.Label, p: DataPort, i: Instance[_ <: AnyRef]): Option[Boolean] =
-    if(!dataType(l, p).isAssignableFrom(TypeRef.Reference(i.thisRef))) Some(false)
+    if (!dataType(l, p).isAssignableFrom(TypeRef.Reference(i.thisRef))) Some(false)
     else onlyValue(l, p).map(_.isInstance(i))
 
   def mayInstance(l: Bytecode.Label, p: DataPort, i: Instance[_ <: AnyRef]): Boolean =
     isInstance(l, p, i) != Some(false)
 
+  def mustInstance(l: Bytecode.Label, p: DataPort, i: Instance[_ <: AnyRef]): Boolean =
+    isInstance(l, p, i) getOrElse { throw new RuntimeException(s"umbigious: $l $p") }
+
   def isThis(l: Bytecode.Label, p: DataPort): Option[Boolean] =
-    isInstance(l, p, self.instance)
+    dataSource(l, p).is(DataSource.This)
 
   def mustThis(l: Bytecode.Label, p: DataPort): Boolean =
-    mustInstance(l, p, self.instance)
-
-  // TODO: rm mr,bc
-  def mustInstance(l: Bytecode.Label, p: DataPort, i: Instance[_ <: AnyRef], mr: MethodRef, bc: Bytecode): Boolean =
-    isInstance(l, p, i).fold {
-      throw new BytecodeTransformException(self.classRef, mr, body, bc, "Ambigious rererence")
-    }(identity)
-
-  def mustInstance(l: Bytecode.Label, p: DataPort, i: Instance[_ <: AnyRef]): Boolean =
-    isInstance(l, p, i).fold {
-      throw new MethodBodyAnalyzeException(body, s"Ambigious rererence: $l.$p")
-    }(identity)
+    dataSource(l, p).must(DataSource.This)
 
   def usedFieldsOf(i: Instance[_ <: AnyRef]): Set[(ClassRef, FieldRef)] =
     body.bytecode.foldLeft(Set.empty[(ClassRef, FieldRef)]) {
       case (agg, (label, bc)) =>
         import Bytecode._
         bc match {
-          case bc: InstanceFieldAccess if mustInstance(label, bc.objectref, i) =>
+          case bc: InstanceFieldAccess if isInstance(label, bc.objectref, i).get =>
             agg + (i.resolveField(bc.classRef, bc.fieldRef) -> bc.fieldRef)
+          case _ => agg
+        }
+    }
+
+  def usedFieldsOf(src: DataSource.Single, klass: Klass): Set[(ClassRef, FieldRef)] =
+    body.bytecode.foldLeft(Set.empty[(ClassRef, FieldRef)]) {
+      case (agg, (label, bc)) =>
+        import Bytecode._
+        bc match {
+          case bc: InstanceFieldAccess if dataSource(label, bc.objectref).may(src) =>
+            agg + (klass.resolveField(bc.classRef, bc.fieldRef) -> bc.fieldRef)
           case _ => agg
         }
     }
@@ -97,6 +99,22 @@ class DataFlow(val body: MethodBody, val self: Data.Reference) {
           case bc @ invokeinterface(cr, mr, _) if mayInstance(label, bc.objectref, i) =>
             agg + (i.resolveVirtualMethod(mr) -> mr)
           case bc @ invokespecial(cr, mr) if mayInstance(label, bc.objectref, i) =>
+            // TODO: Special method resolution
+            agg + (cr -> mr)
+          case _ => agg
+        }
+    }
+
+  def usedMethodsOf(src: DataSource.Single, klass: Klass): Set[(ClassRef, MethodRef)] =
+    body.bytecode.foldLeft(Set.empty[(ClassRef, MethodRef)]) {
+      case (agg, (label, bc)) =>
+        import Bytecode._
+        bc match {
+          case bc @ invokevirtual(cr, mr) if dataSource(label, bc.objectref).may(src) =>
+            agg + (klass.resolveVirtualMethod(mr) -> mr)
+          case bc @ invokeinterface(cr, mr, _) if dataSource(label, bc.objectref).may(src) =>
+            agg + (klass.resolveVirtualMethod(mr) -> mr)
+          case bc @ invokespecial(cr, mr) if dataSource(label, bc.objectref).may(src) =>
             // TODO: Special method resolution
             agg + (cr -> mr)
           case _ => agg
@@ -138,11 +156,11 @@ class DataFlow(val body: MethodBody, val self: Data.Reference) {
       })
 
   lazy val initialFrame: Frame = {
-    val thisData = if (body.isStatic) None else Some(FrameItem(DataSource.This, self))
+    val thisData = if (body.isStatic) None else Some(FrameItem(DataSource.This, Data.Unknown(klass.ref.toTypeRef)))
     val argData = body.descriptor.args.zipWithIndex.flatMap {
       case (t, i) =>
         val source = DataSource.Argument(i)
-        val data = Data.Unsure(t)
+        val data = Data.Unknown(t)
         if (t.isDoubleWord)
           Seq(
             FrameItem(source, data),
@@ -229,7 +247,6 @@ class DataFlow(val body: MethodBody, val self: Data.Reference) {
       }
     }
 
-
     val allFrames = preFrames.values ++ updates.values.map(_.newFrame)
     val maxLocals = allFrames.flatMap(_.locals.keys).max + 1
     val maxStackDepth = allFrames.map(_.stack.size).max
@@ -242,7 +259,7 @@ class DataFlow(val body: MethodBody, val self: Data.Reference) {
   def pretty: String = {
     val format = "L%03d"
     def formatData(l: Bytecode.Label, p: DataPort, d: Data): String = {
-      val typeStr = if (d.typeRef == self.typeRef) "this.class" else d.typeRef.toString
+      val typeStr = if (d.typeRef == klass.ref.toTypeRef) "this.class" else d.typeRef.toString
       val data = s"$typeStr = ${d.valueString}"
       isThis(l, p).fold {
         s"$data(this?)"
@@ -264,12 +281,12 @@ class DataFlow(val body: MethodBody, val self: Data.Reference) {
 object DataFlow {
   sealed abstract trait Rewrite
   class SSA(
-    instructions: Seq[SSA.Instruction],
-    jumps: Map[(SSA.Label, JumpTarget), SSA.Label]
+      instructions: Seq[SSA.Instruction],
+      jumps: Map[(SSA.Label, JumpTarget), SSA.Label]
   ) {
     import SSA._
 
-    def newInstances: Map[ValueLabel, Data.Initialized] = ???
+    def newInstances: Map[ValueLabel, Instance.New[AnyRef]] = ???
     def useSites(v: ValueLabel): Map[Label, Instruction] = ???
     def rewrite(f: PartialFunction[(Label, Instruction), SSA]): SSA = ???
     def mustThis(v: ValueLabel): Boolean = ??? // throw if undecidable
@@ -280,7 +297,7 @@ object DataFlow {
   }
   object SSA {
     def parse(df: DataFlow): SSA = ???
-    case class ValueLabel private(globalUniqueId: Long)
+    case class ValueLabel private (globalUniqueId: Long)
     object ValueLabel {
       private[this] var _currentId: Long = 0L
       def fresh(): ValueLabel = synchronized {

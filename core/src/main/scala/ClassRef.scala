@@ -62,6 +62,7 @@ object ClassRef {
     // TODO: Is this really correct?
     lazy val loadClass: Class[_] =
       (if (classLoader == null) ClassLoader.getSystemClassLoader else classLoader).loadClass(name)
+    def loadKlass: Klass.Native = Klass.from(loadClass)
 
     def extend(name: String, cl: AccessibleClassLoader): Extend = {
       if (loadClass.isInterface) Extend(ClassRef.Object, name, cl, Seq(loadClass))

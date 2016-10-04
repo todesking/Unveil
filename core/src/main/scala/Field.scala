@@ -24,9 +24,9 @@ object Field {
   private[this] def data(f: JField, obj: AnyRef): Data.Concrete = {
     val v = f.get(obj)
     TypeRef.from(f.getType) match {
-      case t: TypeRef.Primitive => Data.Primitive(t, v.asInstanceOf[AnyVal])
+      case t: TypeRef.Primitive => Data.ConcretePrimitive(t, v.asInstanceOf[AnyVal])
       case t: TypeRef.Reference if v == null => Data.Null
-      case t: TypeRef.Reference => Data.Reference(t, Instance.of(v))
+      case t: TypeRef.Reference => Data.ConcreteReference(Instance.of(v))
     }
   }
 }

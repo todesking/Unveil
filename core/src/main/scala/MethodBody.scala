@@ -72,8 +72,11 @@ case class MethodBody(
     s"""$descriptor [$attribute]
 ${codeFragment.pretty}"""
 
+  // TODO: change to dataflow(klass: Klass, values: Map[(CR, FR), Any] = Map.empty)
   def dataflow(self: Instance[_ <: AnyRef]): DataFlow =
-    new DataFlow(this, Data.Reference(self.thisRef.toTypeRef, self))
+    new DataFlow(this, self.klass, self.fieldValues)
+
+  def dataflow(klass: Klass): DataFlow = new DataFlow(this, klass, Map())
 }
 
 object MethodBody {

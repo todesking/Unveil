@@ -54,12 +54,12 @@ case class FrameUpdate(
 
   private[this] def requireStackTopType(f: Frame, t: TypeRef): Unit = t match {
     case t: TypeRef.DoubleWord =>
-      if(f.stack.size < 2) throw fail("double word expected but stack too short")
-      if(!t.isAssignableFrom(f.stack(0).data.typeRef)) throw fail(s"$t expected but ${f.stack(0).data.typeRef}")
+      if (f.stack.size < 2) throw fail("double word expected but stack too short")
+      if (!t.isAssignableFrom(f.stack(0).data.typeRef)) throw fail(s"$t expected but ${f.stack(0).data.typeRef}")
       requireSecondWord(f.stack(1))
     case t: TypeRef.SingleWord =>
-      if(f.stack.size < 1) throw fail("single word expected but stack too short")
-      if(!t.isAssignableFrom(f.stack(0).data.typeRef)) throw fail(s"$t expected but ${f.stack(0).data.typeRef}")
+      if (f.stack.size < 1) throw fail("single word expected but stack too short")
+      if (!t.isAssignableFrom(f.stack(0).data.typeRef)) throw fail(s"$t expected but ${f.stack(0).data.typeRef}")
   }
 
   private[this] def makeSecondWord(fi: FrameItem): FrameItem =
@@ -106,7 +106,7 @@ case class FrameUpdate(
       label,
       bytecode,
       newFrame.copy(stack = stack),
-      frameItems + ((label ->in) -> fi)
+      frameItems + ((label -> in) -> fi)
     )
 
   def push(p: Option[DataPort], d: FrameItem): FrameUpdate =

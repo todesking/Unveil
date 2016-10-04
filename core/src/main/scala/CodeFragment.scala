@@ -3,8 +3,9 @@ package com.todesking.unveil
 class CodeFragment(val bytecodeSeq: Seq[Bytecode], val jumpTargets: Map[(Bytecode.Label, JumpTarget), Bytecode.Label] = Map.empty) {
   {
     require(bytecodeSeq.nonEmpty)
-    val jts = bytecode.collect { case (l, bc: Bytecode.HasJumpTargets) =>
-      bc.jumpTargets.map(l -> _)
+    val jts = bytecode.collect {
+      case (l, bc: Bytecode.HasJumpTargets) =>
+        bc.jumpTargets.map(l -> _)
     }.flatten.toSet
     require(jts.size == jumpTargets.size)
     require(bytecode.forall {
@@ -66,8 +67,9 @@ class CodeFragment(val bytecodeSeq: Seq[Bytecode], val jumpTargets: Map[(Bytecod
     prepend(new CodeFragment(bcs))
 
   def prepend(cf: CodeFragment): CodeFragment = {
-    val newJts = cf.jumpTargets ++ jumpTargets.map { case ((l, jt), dest) =>
-      (l.offset(cf.bytecode.size) -> jt) -> dest.offset(cf.bytecode.size)
+    val newJts = cf.jumpTargets ++ jumpTargets.map {
+      case ((l, jt), dest) =>
+        (l.offset(cf.bytecode.size) -> jt) -> dest.offset(cf.bytecode.size)
     }
     val newBcs = cf.bytecodeSeq ++ bytecodeSeq
     new CodeFragment(newBcs, newJts)
@@ -77,15 +79,16 @@ class CodeFragment(val bytecodeSeq: Seq[Bytecode], val jumpTargets: Map[(Bytecod
     def adjustIndex(start: Int, shift: Int, l: Bytecode.Label) =
       if (l.index > start) l.offset(shift) else l
     val (bcs, jts, _) =
-      rewrites.toSeq.sortBy(_._1.index).foldLeft((bytecodeSeq, jumpTargets, 0)) { case ((bcs, jts, offset), (label, cf)) =>
-        val start = label.index + offset
-        require(0 <= start && start < bcs.size)
-        require(cf.bytecode.nonEmpty) // Dataflow could broken if just remove a bytecode
-        val newBcs = bcs.patch(start, cf.bytecodeSeq, 1)
-        val shift = cf.bytecode.size - 1
-        val newJts = jts.map { case ((l, jt), dest) => (adjustIndex(start, shift, l) -> jt) -> adjustIndex(start, shift, dest) } ++
-          cf.jumpTargets.map { case ((l, jt), dest) => (l.offset(start) -> jt) -> dest.offset(start) }
-        (newBcs, newJts, offset + shift)
+      rewrites.toSeq.sortBy(_._1.index).foldLeft((bytecodeSeq, jumpTargets, 0)) {
+        case ((bcs, jts, offset), (label, cf)) =>
+          val start = label.index + offset
+          require(0 <= start && start < bcs.size)
+          require(cf.bytecode.nonEmpty) // Dataflow could broken if just remove a bytecode
+          val newBcs = bcs.patch(start, cf.bytecodeSeq, 1)
+          val shift = cf.bytecode.size - 1
+          val newJts = jts.map { case ((l, jt), dest) => (adjustIndex(start, shift, l) -> jt) -> adjustIndex(start, shift, dest) } ++
+            cf.jumpTargets.map { case ((l, jt), dest) => (l.offset(start) -> jt) -> dest.offset(start) }
+          (newBcs, newJts, offset + shift)
       }
     new CodeFragment(bcs, jts)
   }

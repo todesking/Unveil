@@ -38,7 +38,7 @@ class Spec extends FunSpec with Matchers {
         printEvents()
       case o @ Failed(t: InvalidClassException) =>
         println("=== INVALID CLASS")
-        println(t.instance.pretty)
+        println(t.klass.pretty)
         printEvents()
       case Failed(t: UnveilBugException) =>
         println(t.detail)
@@ -61,7 +61,7 @@ class Spec extends FunSpec with Matchers {
       }
       val obj = new Const
       val i = Instance.of(obj)
-      i.hasVirtualMethod("intMethod()I") should be(true)
+      i.klass.hasVirtualMethod("intMethod()I") should be(true)
 
       val intMethod = MethodRef.parse("intMethod()I", defaultCL)
       val longMethod = MethodRef.parse("longMethod()J", defaultCL)
@@ -256,7 +256,7 @@ class Spec extends FunSpec with Matchers {
         val b = Instance.of(new B)
         val i0 = Instance.of(new A)
           .duplicate1(el)
-          .addField(fieldB, Field(fieldB.descriptor, FieldAttribute.Final, Data.Reference(b.thisRef.toTypeRef, b)))
+          .addField(fieldB, Field(fieldB.descriptor, FieldAttribute.Final, Data.ConcreteReference(b)))
         val i =
           i0.addMethod(
             foo,
