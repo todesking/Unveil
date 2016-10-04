@@ -13,7 +13,7 @@ import com.todesking.scalapp.syntax._
 import Syntax.Upcast
 
 sealed abstract class Instance[A <: AnyRef] {
-  def klass: Klass = ???
+  def klass: Klass
   def escaped: Boolean = ???
   def toData: Data = Data.reference(this)
 
@@ -24,7 +24,7 @@ sealed abstract class Instance[A <: AnyRef] {
   final def methodBody(classRef: ClassRef, methodRef: MethodRef): MethodBody =
     klass.methodBody(classRef, methodRef)
 
-  def fieldValues: Map[(ClassRef, FieldRef), Data.Concrete]
+  def fieldValues: Map[(ClassRef, FieldRef), Data]
 
   def dataflow(methodRef: MethodRef): DataFlow =
     methodBody(methodRef).dataflow(this)
@@ -46,19 +46,12 @@ sealed abstract class Instance[A <: AnyRef] {
   final def fieldKeys: Set[(ClassRef, FieldRef)] =
     klass.instanceFieldAttributes.keySet
 
-  // TODO: change to instanceFields
-  def fields: Map[(ClassRef, FieldRef), Field]
-
   final def resolveVirtualMethod(mr: MethodRef): ClassRef =
     klass.resolveVirtualMethod(mr)
 
   // TODO: interface field???
   def resolveField(cr: ClassRef, fr: FieldRef): ClassRef =
     klass.resolveInstanceField(cr, fr)
-
-  def duplicate[B >: A <: AnyRef: ClassTag](el: EventLogger): Instance[B]
-
-  def duplicate1(el: EventLogger): Instance.Duplicate[A]
 
   def valueOption: Option[A]
 
@@ -83,9 +76,14 @@ object Instance {
 
   sealed abstract class Concrete[A <: AnyRef] extends Instance[A] {
     def materialize(el: EventLogger): Instance.Original[A]
+    // TODO: really need it?
     def value: A
+    def duplicate[B >: A <: AnyRef: ClassTag](el: EventLogger): Instance[B]
+    def duplicate1(el: EventLogger): Instance.Duplicate[A]
+    // TODO: change to instanceFields
+    def fields: Map[(ClassRef, FieldRef), Field]
 
-    override def duplicate[B >: A <: AnyRef: ClassTag](el: EventLogger): Instance.Duplicate[B]
+    override def fieldValues: Map[(ClassRef, FieldRef), Data.Concrete]
   }
   sealed abstract class Abstract[A <: AnyRef] extends Instance[A] {
     final override def valueOption = None
@@ -209,18 +207,23 @@ object Instance {
         .newInstance[A]()
   }
 
-  class New[A <: AnyRef](val classRef: ClassRef, constructor: MethodDescriptor) extends Abstract[A] {
+  class New[A <: AnyRef](override val klass: Klass.Native, constructor: MethodDescriptor) extends Abstract[A] with Equality.Reference {
     def constructorSSA: DataFlow.SSA =
-      dataflow(classRef, MethodRef.constructor(constructor)).toSSA
-    override def duplicate[B >: A <: AnyRef](el: com.todesking.unveil.EventLogger)(implicit evidence$1: scala.reflect.ClassTag[B]): com.todesking.unveil.Instance[B] = ???
-    override def duplicate1(el: com.todesking.unveil.EventLogger): com.todesking.unveil.Instance.Duplicate[A] = ???
-    override def fields: Map[(com.todesking.unveil.ClassRef, com.todesking.unveil.FieldRef), com.todesking.unveil.Field] = ???
-    override def fieldValues: Map[(com.todesking.unveil.ClassRef, com.todesking.unveil.FieldRef), com.todesking.unveil.Data.Concrete] = fields.mapValues(_.data)
-    override def pretty: String = ???
-    override def thisRef: com.todesking.unveil.ClassRef = ???
+      dataflow(klass.ref, MethodRef.constructor(constructor)).toSSA
+
+    override lazy val fieldValues =
+      klass.instanceFieldAttributes.map { case (k@(cr, fr), a) => k -> Data.Unknown(fr.typeRef) }
+
+    override def pretty: String = s"new ${klass.ref}(${constructor.argsStr})"
+    override def thisRef = klass.ref
   }
 
-  private def duplicate[A <: AnyRef, B >: A <: AnyRef](o: Instance[A], superRef: ClassRef.Concrete, el: EventLogger): Duplicate[B] = {
+  class Given[A <: AnyRef](override val klass: Klass, override val fieldValues: Map[(ClassRef, FieldRef), Data]) extends Abstract[A] with Equality.Reference {
+    override def thisRef = klass.ref
+    override def pretty = s"<given instance of ${klass.ref}>"
+  }
+
+  private def duplicate[A <: AnyRef, B >: A <: AnyRef](o: Instance.Concrete[A], superRef: ClassRef.Concrete, el: EventLogger): Duplicate[B] = {
     el.section("Instance.duplicate") { el =>
       el.logCFields("base instance fields", o.fields.keySet)
       val (klass, fieldRenaming) = o.klass.duplicate(superRef, el)

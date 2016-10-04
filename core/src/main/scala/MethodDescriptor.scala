@@ -3,7 +3,8 @@ package com.todesking.unveil
 import java.lang.reflect.{ Method => JMethod, Constructor }
 
 case class MethodDescriptor(ret: TypeRef.Public, args: Seq[TypeRef.Public]) {
-  def str: String = s"${args.map(_.str).mkString("(", "", ")")}${ret.str}"
+  def argsStr: String = args.map(_.str).mkString("(", "", ")")
+  def str: String = s"${argsStr}${ret.str}"
 
   override def toString = s"${args.mkString("(", ", ", ")")}${ret}"
 

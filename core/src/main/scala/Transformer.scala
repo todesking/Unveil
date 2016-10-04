@@ -9,7 +9,7 @@ trait Transformer { self =>
   def name: String
   def params: Map[String, String] = Map.empty
 
-  def apply[A <: AnyRef](orig: Instance[A], el: EventLogger): Try[Instance.Duplicate[A]] =
+  def apply[A <: AnyRef](orig: Instance.Concrete[A], el: EventLogger): Try[Instance.Duplicate[A]] =
     try {
       el.enterTransformer(this, orig) { el => Success(apply0(orig, el)) }
     } catch {
@@ -17,17 +17,17 @@ trait Transformer { self =>
         el.fail(e)
         Failure(e)
     }
-  protected[this] def apply0[A <: AnyRef](orig: Instance[A], el: EventLogger): Instance.Duplicate[A]
+  protected[this] def apply0[A <: AnyRef](orig: Instance.Concrete[A], el: EventLogger): Instance.Duplicate[A]
 
   def andThen(next: Transformer): Transformer =
     new Transformer {
       override def name = s"${self.name} >>> ${next.name}"
-      override def apply[A <: AnyRef](orig: Instance[A], el: EventLogger): Try[Instance.Duplicate[A]] = {
+      override def apply[A <: AnyRef](orig: Instance.Concrete[A], el: EventLogger): Try[Instance.Duplicate[A]] = {
         el.enterTransformer(this, orig) { el =>
           self.apply(orig, el).flatMap { i2 => next.apply(i2, el) }
         }
       }
-      override def apply0[A <: AnyRef](orig: Instance[A], el: EventLogger) = throw new AssertionError()
+      override def apply0[A <: AnyRef](orig: Instance.Concrete[A], el: EventLogger) = throw new AssertionError()
     }
 
   def >>>(next: Transformer): Transformer =
@@ -42,7 +42,7 @@ object Transformer {
   // TODO: support mutable fields(if fref eq original then optimized else original)
   object fieldFusion extends Transformer {
     override def name = s"fieldFusion"
-    override def apply0[A <: AnyRef](instance: Instance[A], el: EventLogger): Instance.Duplicate[A] = {
+    override def apply0[A <: AnyRef](instance: Instance.Concrete[A], el: EventLogger): Instance.Duplicate[A] = {
       val dupInstance = instance.duplicate1(el)
       fuse(
         "",
@@ -174,7 +174,7 @@ object Transformer {
 
   object methodInlining extends Transformer {
     override def name = "methodInlining"
-    override def apply0[A <: AnyRef](orig: Instance[A], el: EventLogger): Instance.Duplicate[A] = {
+    override def apply0[A <: AnyRef](orig: Instance.Concrete[A], el: EventLogger): Instance.Duplicate[A] = {
       orig
         .rewritableVirtualMethods
         .keys
@@ -251,7 +251,7 @@ object Transformer {
 
   object localInstanceInlining extends Transformer {
     override def name = "localInstanceInlining"
-    override def apply0[A <: AnyRef](orig: Instance[A], el: EventLogger): Instance.Duplicate[A] = {
+    override def apply0[A <: AnyRef](orig: Instance.Concrete[A], el: EventLogger): Instance.Duplicate[A] = {
       orig
         .rewritableVirtualMethods
         .keys
@@ -278,7 +278,7 @@ object Transformer {
           .filter { case (v, d) => !ssa.escaped(v) && !d.escaped }
           .map {
             case (v, d) =>
-              v -> (d -> d.fields.keys.map { f => f -> ValueLabel.fresh() }.toMap)
+              v -> (d -> d.klass.instanceFieldAttributes.keys.map { f => f -> ValueLabel.fresh() }.toMap)
           }
       def toInlineForm(
         base: SSA,

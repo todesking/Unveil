@@ -490,8 +490,9 @@ object Bytecode {
       val data =
         self match {
           case d: Data.Reference =>
-            val field = d.instance.fields(d.instance.resolveField(classRef, fieldRef) -> fieldRef)
-            if (field.isFinal) field.data
+            val key = d.instance.resolveField(classRef, fieldRef) -> fieldRef
+            val field = d.instance.klass.instanceFieldAttributes(key)
+            if (field.isFinal) d.instance.fieldValues(key)
             else Data.Unknown(fieldRef.descriptor.typeRef)
           case _ =>
             Data.Unknown(fieldRef.descriptor.typeRef)
