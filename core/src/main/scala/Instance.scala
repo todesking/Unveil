@@ -118,7 +118,7 @@ object Instance {
       }
 
     override def duplicate1(el: EventLogger): Duplicate[A] =
-      Instance.duplicate(this, this, thisRef, el)
+      Instance.duplicate(this, thisRef, el)
 
     override lazy val fields: Map[(ClassRef, FieldRef), Field] =
       klass.instanceFieldAttributes
@@ -129,13 +129,10 @@ object Instance {
       fields.mapValues(_.data)
   }
 
-  // TODO: rm orig
   class Duplicate[A <: AnyRef](
-      val orig: Original[_ <: A],
       override val klass: Klass.Modified,
       override val fieldValues: Map[(ClassRef, FieldRef), Data.Concrete]
   ) extends Concrete[A] with Equality.Reference {
-    require(orig.klass.ref <= klass.`super`.ref)
     klass.requireWholeInstanceField(fieldValues.keySet)
 
     override def value = materialize(new EventLogger).value
@@ -154,7 +151,6 @@ object Instance {
         vs.partition { case ((cr, fr), f) => cr == thisRef }
 
       new Duplicate[A](
-        orig,
         klass,
         fieldValues ++ vs
       )
@@ -165,17 +161,16 @@ object Instance {
       klass.pretty // TODO: add field values
 
     def addMethod(mr: MethodRef, body: MethodBody): Duplicate[A] =
-      new Duplicate(orig, klass.addMethod(mr, body), fieldValues)
+      new Duplicate(klass.addMethod(mr, body), fieldValues)
 
     def addMethods(ms: Map[MethodRef, MethodBody]): Duplicate[A] =
       ms.foldLeft(this) { case (i, (mr, b)) => i.addMethod(mr, b) }
 
     private[this] def modifyKlass(f: klass.type => Klass.Modified): Duplicate[A] =
-      new Duplicate(orig, f(klass), fieldValues)
+      new Duplicate(f(klass), fieldValues)
 
     def addField(fr: FieldRef, field: Field): Duplicate[A] = {
       new Duplicate(
-        orig,
         klass.addField(fr, field.attribute),
         fieldValues + ((thisRef, fr) -> field.data)
       )
@@ -189,13 +184,12 @@ object Instance {
 
     override def duplicate[B >: A <: AnyRef: ClassTag](el: EventLogger): Duplicate[B] = {
       val newSuperRef = ClassRef.of(implicitly[ClassTag[B]].runtimeClass)
-      Instance.duplicate(this, orig, newSuperRef, el)
+      Instance.duplicate(this, newSuperRef, el)
     }
 
     // TODO: replace thisRef in method/field
     def rewriteThisRef(newRef: ClassRef.Extend): Duplicate[A] =
       new Duplicate[A](
-        orig,
         klass.changeRef(newRef),
         fieldValues.map {
           case (k @ (cr, fr), v) =>
@@ -226,7 +220,7 @@ object Instance {
     override def thisRef: com.todesking.unveil.ClassRef = ???
   }
 
-  private def duplicate[A <: AnyRef, B >: A <: AnyRef](o: Instance[A], original: Original[_ <: A], superRef: ClassRef.Concrete, el: EventLogger): Duplicate[B] = {
+  private def duplicate[A <: AnyRef, B >: A <: AnyRef](o: Instance[A], superRef: ClassRef.Concrete, el: EventLogger): Duplicate[B] = {
     el.section("Instance.duplicate") { el =>
       el.logCFields("base instance fields", o.fields.keySet)
       val (klass, fieldRenaming) = o.klass.duplicate(superRef, el)
@@ -248,7 +242,6 @@ object Instance {
         }
       el.logCFields("valued fields", fieldValues.keys)
       new Duplicate[B](
-        original,
         klass,
         fieldValues
       )
