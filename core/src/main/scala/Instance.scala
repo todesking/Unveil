@@ -80,11 +80,12 @@ object Instance {
   def of[A <: AnyRef](value: A): Original[A] = Original(value)
 
   sealed abstract class Concrete[A <: AnyRef] extends Instance[A] {
-    def materialized: Instance.Original[A]
+    def materialize(el: EventLogger): Instance.Original[A]
 
     override def toData = Data.ConcreteReference(this)
     override def duplicate[B >: A <: AnyRef: ClassTag](el: EventLogger): Instance.Duplicate[B]
   }
+  sealed abstract class Abstract
 
   case class Original[A <: AnyRef](value: A)
       extends Concrete[A] with Equality.Reference {
@@ -96,7 +97,7 @@ object Instance {
 
     override def toString = pretty
 
-    override def materialized = this
+    override def materialize(el: EventLogger) = this
 
     override val thisRef: ClassRef.Concrete = klass.ref
 
@@ -195,8 +196,8 @@ object Instance {
           k -> Field(fr.descriptor, fa, fieldValues(k))
       }
 
-    override lazy val materialized: Original[A] =
-      klass.materialize(fieldValues, new EventLogger)
+    override def materialize(el: EventLogger): Original[A] =
+      klass.materialize(fieldValues, el)
         .newInstance[A]()
   }
 

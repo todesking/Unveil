@@ -56,7 +56,7 @@ object Bench {
     val i = Instance.of(FF).duplicate[Function1[Int, Int]](el)
     val ti =
       Transformer.fieldFusion(i, el)
-    ti.get.materialized.value
+    ti.get.materialize(el).value
   }
   val fuseInlinedF = {
     def F = f1 andThen f2 andThen f3 andThen f4 andThen f5 andThen f6 andThen f7 andThen f8
@@ -66,7 +66,7 @@ object Bench {
     val i = Instance.of(FF).duplicate[Function1[Int, Int]](el)
     val ti =
       (Transformer.fieldFusion >>> Transformer.methodInlining)(i, el)
-    ti.get.materialized.value
+    ti.get.materialize(el).value
   }
 }
 

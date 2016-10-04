@@ -33,20 +33,21 @@ ${body.pretty.split("\n").map("    " + _).mkString("\n")}"""
           }
       }.mkString("\n")
     }
+
   // New fields:
 ${
       klass.declaredFields.map {
         case (fr, attr) => s"$fr $attr"
       }.map("  " + _).mkString("\n")
     }
+
   // Super fields:
 ${
       klass.instanceFieldAttributes.filterNot(_._1._1 == klass.ref).map {
         case ((cr, fr), attr) => s"$cr.$fr ${attr}"
       }.mkString("\n")
     }
-}
-"""
+}"""
   }
 
   // TODO: super class information

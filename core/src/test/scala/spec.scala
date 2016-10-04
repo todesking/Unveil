@@ -67,8 +67,9 @@ class Spec extends FunSpec with Matchers {
       val longMethod = MethodRef.parse("longMethod()J", defaultCL)
       val ri = i.duplicate[Const](el)
       withThe(ri) {
-        ri.materialized.value.intMethod() should be(1)
-        ri.materialized.value.longMethod() should be(0L)
+        val m = ri.materialize(el)
+        m.value.intMethod() should be(1)
+        m.value.longMethod() should be(0L)
       }
     }
     it("invokeVirtual with no arguments") {
@@ -82,7 +83,7 @@ class Spec extends FunSpec with Matchers {
       val i = Instance.of(d)
       val foo = MethodRef.parse("foo()I", defaultCL)
 
-      val ri = i.duplicate(el).materialized
+      val ri = i.duplicate(el).materialize(el)
 
       ri.value.foo() should be(1)
     }
@@ -97,7 +98,7 @@ class Spec extends FunSpec with Matchers {
       val i = Instance.of(d)
       val foo = MethodRef.parse("foo()I", defaultCL)
 
-      val ri = i.duplicate(el).materialized
+      val ri = i.duplicate(el).materialize(el)
 
       ri.value.foo() should be(1)
     }
@@ -116,7 +117,7 @@ class Spec extends FunSpec with Matchers {
       val i = Instance.of(d)
       val foo = MethodRef.parse("foo(I)I", defaultCL)
 
-      val ri = i.duplicate(el).materialized
+      val ri = i.duplicate(el).materialize(el)
       ri.value.foo(1) should be(100)
       ri.value.foo(-1) should be(-10)
       ri.value.foo(-11) should be(-100)
@@ -137,7 +138,7 @@ class Spec extends FunSpec with Matchers {
       obj.foo() should be(99)
       val i = Instance.of(obj)
       val foo = MethodRef.parse("foo()I", defaultCL)
-      val ri = i.duplicate(el).materialized
+      val ri = i.duplicate(el).materialize(el)
       ri.value.foo() should be(99)
     }
     it("real upcast") {
@@ -154,7 +155,7 @@ class Spec extends FunSpec with Matchers {
       obj.foo() should be(99)
       val i = Instance.of[A](obj)
       val foo = MethodRef.parse("foo()I", defaultCL)
-      val ri = i.duplicate[A](el).materialized
+      val ri = i.duplicate[A](el).materialize(el)
       dotBody("real_upcast.dot", ri, ri.methodBody(foo))
       classOf[A].isAssignableFrom(ri.value.getClass) should be(true)
       classOf[B].isAssignableFrom(ri.value.getClass) should be(false)
@@ -171,7 +172,7 @@ class Spec extends FunSpec with Matchers {
 
       val foo = MethodRef.parse("foo()I", defaultCL)
 
-      val ri = i.duplicate(el).materialized
+      val ri = i.duplicate(el).materialize(el)
 
       dotBody("s.dot", ri, ri.methodBody(foo))
 
@@ -186,7 +187,7 @@ class Spec extends FunSpec with Matchers {
       val i = Instance.of(new A)
       i.value.foo should be(10)
 
-      val ri = i.duplicate(el).materialized
+      val ri = i.duplicate(el).materialize(el)
       ri.value.foo should be(10)
     }
     it("field duplicate") {
@@ -202,7 +203,7 @@ class Spec extends FunSpec with Matchers {
       val i = Instance.of(new B)
       i.value.foo should be(1000)
 
-      val ri = i.duplicate[Base](el).materialized
+      val ri = i.duplicate[Base](el).materialize(el)
       ri.value.foo should be(1000)
     }
     it("dupdup") {
@@ -218,14 +219,14 @@ class Spec extends FunSpec with Matchers {
       val i = Instance.of(new B)
       i.value.foo should be(1000)
 
-      val ri = i.duplicate[Base](el).duplicate[Base](el).materialized
+      val ri = i.duplicate[Base](el).duplicate[Base](el).materialize(el)
       ri.value.foo should be(1000)
     }
     it("dup and accessor") {
       abstract class Base { def foo: Int }
       class A extends Base { override val foo = 1 }
       val dup = Instance.of(new A).duplicate[Base](el)
-      dup.materialized.value.foo should be(1)
+      dup.materialize(el).value.foo should be(1)
     }
     describe("field fusion") {
       it("when empty") {
@@ -238,7 +239,7 @@ class Spec extends FunSpec with Matchers {
         i.value.foo() should be(expected)
 
         val fi = Transformer.fieldFusion.apply(i, el).get
-        fi.materialized.value.foo should be(expected)
+        fi.materialize(el).value.foo should be(expected)
       }
       it("simple") {
         class A {
@@ -272,14 +273,14 @@ class Spec extends FunSpec with Matchers {
             )
           )
         withThe(i) {
-          i.materialized.value.foo() should be(expected)
+          i.materialize(el).value.foo() should be(expected)
         }
 
         val fi = withThe(i) {
           Transformer.fieldFusion(i, el).get
         }
         withThe(fi) {
-          fi.materialized.value.foo() should be(expected)
+          fi.materialize(el).value.foo() should be(expected)
         }
       }
       it("nested") {
@@ -308,7 +309,7 @@ class Spec extends FunSpec with Matchers {
         withThe(fused) {
           fused.dataflow(foo).usedFieldsOf(fused) should be('empty)
           fused.usedMethodsOf(Instance.of(c)) should be('empty)
-          fused.materialized.value.foo() should be(expected)
+          fused.materialize(el).value.foo() should be(expected)
         }
       }
 
@@ -320,16 +321,16 @@ class Spec extends FunSpec with Matchers {
         val i = Instance.of(f)
         val n = 1
         val expected = 5
-        i.materialized.value.apply(n) should be(expected)
+        i.materialize(el).value.apply(n) should be(expected)
 
         val dup = i.duplicate[Int => Int](el)
         withThe(dup) {
-          dup.materialized.value.apply(n) should be(expected)
+          dup.materialize(el).value.apply(n) should be(expected)
         }
 
         val ti = Transformer.fieldFusion(i.duplicate[Int => Int](el), el).get
         withThe(ti) {
-          ti.materialized.value.apply(n) should be(expected)
+          ti.materialize(el).value.apply(n) should be(expected)
         }
       }
     }
@@ -349,7 +350,7 @@ class Spec extends FunSpec with Matchers {
 
         val ri = Transformer.methodInlining(i, el).get
         withThe(ri) {
-          ri.materialized.value.foo() should be(expected)
+          ri.materialize(el).value.foo() should be(expected)
           ri.dataflow(foo).usedMethodsOf(ri) should be('empty)
         }
       }
@@ -367,7 +368,7 @@ class Spec extends FunSpec with Matchers {
 
         val ri = Transformer.methodInlining(i, el).get
         withThe(ri) {
-          ri.materialized.value.foo() should be(expected)
+          ri.materialize(el).value.foo() should be(expected)
           ri.dataflow(foo).usedMethodsOf(ri) should be('empty)
         }
       }
@@ -382,7 +383,7 @@ class Spec extends FunSpec with Matchers {
           def foo(): A = new A(2)
         }
         val x = Instance.of(new A(1)).duplicate[A](el)
-        x.materialized.value.foo.value should be(2)
+        x.materialize(el).value.foo.value should be(2)
       }
       it("inline local instance") {
         class A(val value: Int) {
@@ -391,7 +392,7 @@ class Spec extends FunSpec with Matchers {
         val i = Instance.of(new A(1))
         val ri = Transformer.localInstanceInlining(i, el).get
         withThe(ri) {
-          ri.materialized.value.foo() should be(3)
+          ri.materialize(el).value.foo() should be(3)
           ri.methodBody(MethodRef.parse("foo()I", defaultCL))
             .bytecode.collect { case x@(l, Bytecode.new_(_)) => x } should be('empty)
         }

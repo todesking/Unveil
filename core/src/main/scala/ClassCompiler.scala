@@ -13,10 +13,22 @@ class ClassCompiler(klass: Klass.Modified, fieldValues: Map[(ClassRef, FieldRef)
   lazy val superFields =
     klass.`super`.instanceFieldAttributes.map { case (k, a) => k -> Field(k._2.descriptor, a, fieldValues(k)) }
 
-  lazy val superConstructor: Analyze.SetterConstructor =
-    Analyze.findSetterConstructor(klass.`super`, superFields) getOrElse {
-      throw new TransformException(s"Usable constructor not found")
+  lazy val superConstructor: Analyze.SetterConstructor = {
+    // TODO: refactor
+    el.section(s"Find super ctor from ${klass.ref.superClassRef}") { el =>
+      val ctors = Analyze.setterConstructorsTry(klass.ref.superClassRef.loadKlass)
+      import scala.util.{Success, Failure}
+      el.log(s"${ctors.size} ctor candidate found")
+      ctors.foreach {
+        case Success(ctor) =>
+          el.log(s"Setter ctor found: ${ctor.descriptor}")
+        case Failure(e) => el.log(s"Setter ctor unmatch: ${e}")
+      }
+      Analyze.findSetterConstructor(klass.ref.superClassRef.loadKlass, superFields) getOrElse {
+        throw new TransformException(s"Usable constructor not found")
+      }
     }
+  }
   lazy val superConstructorArgs: Seq[Any] = superConstructor.toArguments(superFields)
   lazy val constructorArgs: Seq[(TypeRef.Public, Any)] =
     thisFieldsSeq
@@ -63,69 +75,74 @@ class ClassCompiler(klass: Klass.Modified, fieldValues: Map[(ClassRef, FieldRef)
 
     import Javassist.ctClass
 
-    validate()
+    el.section("ClassCompiler.compile") { el =>
+      validate()
 
-    val classLoader = klass.ref.classLoader
+      el.log(s"compiling ${klass.ref}")
+      el.logFieldValues("Field values", fieldValues)
 
-    val classPool = new ClassPool(null)
-    Instance.findMaterializedClasses(classLoader).foreach {
-      case (name, bytes) =>
-        classPool.appendClassPath(new ByteArrayClassPath(name, bytes))
-    }
-    classPool.appendClassPath(new ClassClassPath(superClass))
+      val classLoader = klass.ref.classLoader
 
-    val ctBase = classPool.get(superClass.getName)
+      val classPool = new ClassPool(null)
+      Instance.findMaterializedClasses(classLoader).foreach {
+        case (name, bytes) =>
+          classPool.appendClassPath(new ByteArrayClassPath(name, bytes))
+      }
+      classPool.appendClassPath(new ClassClassPath(superClass))
 
-    val jClass = classPool.makeClass(klass.ref.name, ctBase)
-    jClass.setModifiers(jClass.getModifiers() | Modifier.PUBLIC)
-    klass.ref.interfaces.foreach { i =>
-      jClass.addInterface(classPool.get(i.getName))
-    }
-    val constPool = jClass.getClassFile.getConstPool
-    val ctObject = classPool.get("java.lang.Object")
-    import Bytecode._
-    klass.declaredMethods
-      .foreach {
-        case (ref, body) =>
-          val codeAttribute = Javassist.compile(classPool, constPool, body.dataflow(klass))
-          val minfo = new MethodInfo(constPool, ref.name, ref.descriptor.str)
-          minfo.setCodeAttribute(codeAttribute)
-          val sm = javassist.bytecode.stackmap.MapMaker.make(classPool, minfo)
-          codeAttribute.setAttribute(sm)
-          minfo.setAccessFlags(body.attribute.toInt)
-          jClass.getClassFile.addMethod(minfo)
+      val ctBase = classPool.get(superClass.getName)
+
+      val jClass = classPool.makeClass(klass.ref.name, ctBase)
+      jClass.setModifiers(jClass.getModifiers() | Modifier.PUBLIC)
+      klass.ref.interfaces.foreach { i =>
+        jClass.addInterface(classPool.get(i.getName))
+      }
+      val constPool = jClass.getClassFile.getConstPool
+      val ctObject = classPool.get("java.lang.Object")
+      import Bytecode._
+      klass.declaredMethods
+        .foreach {
+          case (ref, body) =>
+            val codeAttribute = Javassist.compile(classPool, constPool, body.dataflow(klass))
+            val minfo = new MethodInfo(constPool, ref.name, ref.descriptor.str)
+            minfo.setCodeAttribute(codeAttribute)
+            val sm = javassist.bytecode.stackmap.MapMaker.make(classPool, minfo)
+            codeAttribute.setAttribute(sm)
+            minfo.setAccessFlags(body.attribute.toInt)
+            jClass.getClassFile.addMethod(minfo)
+        }
+
+      klass.declaredFields.foreach {
+        case (ref, attr) =>
+          val ctf = new CtField(ctClass(ref.descriptor.typeRef), ref.name, jClass)
+          ctf.setModifiers(attr.toInt)
+          jClass.addField(ctf)
       }
 
-    klass.declaredFields.foreach {
-      case (ref, attr) =>
-        val ctf = new CtField(ctClass(ref.descriptor.typeRef), ref.name, jClass)
-        ctf.setModifiers(attr.toInt)
-        jClass.addField(ctf)
+      val ctor = new CtConstructor(constructorArgs.map(_._1).map(ctClass).toArray, jClass)
+      jClass.addConstructor(ctor)
+
+      val ctorMethodInfo =
+        jClass
+          .getClassFile
+          .getMethods
+          .map(_.asInstanceOf[MethodInfo])
+          .find(_.getName == "<init>")
+          .get
+
+      val ctorCA = Javassist.compile(classPool, constPool, constructorBody.dataflow(klass))
+      ctorMethodInfo.setCodeAttribute(ctorCA)
+      val sm = javassist.bytecode.stackmap.MapMaker.make(classPool, ctorMethodInfo)
+      ctorCA.setAttribute(sm)
+
+      classLoader.registerClass(klass.ref.name, jClass.toBytecode)
+      val concreteClass = classLoader.loadClass(klass.ref.name)
+
+      val bytes = jClass.toBytecode
+      Instance.registerMaterialized(classLoader, jClass.getName, bytes)
+
+      new Klass.MaterializedNative(concreteClass, constructorArgs)
     }
-
-    val ctor = new CtConstructor(constructorArgs.map(_._1).map(ctClass).toArray, jClass)
-    jClass.addConstructor(ctor)
-
-    val ctorMethodInfo =
-      jClass
-        .getClassFile
-        .getMethods
-        .map(_.asInstanceOf[MethodInfo])
-        .find(_.getName == "<init>")
-        .get
-
-    val ctorCA = Javassist.compile(classPool, constPool, constructorBody.dataflow(klass))
-    ctorMethodInfo.setCodeAttribute(ctorCA)
-    val sm = javassist.bytecode.stackmap.MapMaker.make(classPool, ctorMethodInfo)
-    ctorCA.setAttribute(sm)
-
-    classLoader.registerClass(klass.ref.name, jClass.toBytecode)
-    val concreteClass = classLoader.loadClass(klass.ref.name)
-
-    val bytes = jClass.toBytecode
-    Instance.registerMaterialized(classLoader, jClass.getName, bytes)
-
-    new Klass.MaterializedNative(concreteClass, constructorArgs)
   }
 
   private[this] def validate(): Unit = {

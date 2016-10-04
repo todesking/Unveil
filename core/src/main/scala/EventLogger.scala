@@ -63,6 +63,9 @@ class EventLogger {
   def logFields(desc: String, fs: Iterable[FieldRef]): Unit =
     eventBuffer += Event.Fields(desc, fs.toSeq)
 
+  def logFieldValues(desc: String, fvs: Iterable[((ClassRef, FieldRef), Data)]): Unit =
+    eventBuffer += Event.FieldValues(desc, fvs.toSeq)
+
   def fail(e: Throwable): Unit =
     eventBuffer += Event.Fail(e)
 
@@ -107,6 +110,11 @@ class EventLogger {
         if (fs.isEmpty) ""
         else fs.map { case fr => s"- $fr" }.mkString("\n", "\n", "")
       )
+    case Event.FieldValues(desc, fvs) =>
+      s"$desc =" + (
+        if(fvs.isEmpty) ""
+        else fvs.map { case ((cr, fr), v) => s"- $cr\n     .$fr = $v" }.mkString("\n", "\n", "")
+      )
   }
 
   private[this] def prettyPath(path: Path) = path match {
@@ -145,6 +153,7 @@ object EventLogger {
     case class CMethods(desc: String, cfs: Seq[(ClassRef, MethodRef)]) extends Event
     case class Methods(desc: String, ms: Seq[MethodRef]) extends Event
     case class Fields(desc: String, fs: Seq[FieldRef]) extends Event
+    case class FieldValues(desc: String, fvs: Seq[((ClassRef, FieldRef), Data)]) extends Event
   }
 
 }

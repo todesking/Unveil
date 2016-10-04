@@ -76,7 +76,7 @@ object Data {
     override def typeRef: TypeRef.Reference = instance.thisRef.toTypeRef
     def classRef: ClassRef = typeRef.classRef
     override def valueString = "<object>"
-    override def concreteValue = instance.materialized.value
+    override def concreteValue = instance.materialize(new EventLogger).value
     override def isInstance(i: Instance[_ <: AnyRef]) = instance == i
   }
   case class NewReference(instance: Instance.New[_ <: AnyRef]) extends Known {
