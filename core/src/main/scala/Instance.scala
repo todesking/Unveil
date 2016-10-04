@@ -34,9 +34,8 @@ sealed abstract class Instance[A <: AnyRef] {
 
   def thisRef: ClassRef
 
-  // TODO: change to instanceMethodAttributes
   final def methods: Map[(ClassRef, MethodRef), MethodAttribute] =
-    klass.methods
+    klass.instanceMethods
 
   final def virtualMethods: Map[MethodRef, MethodAttribute] =
     methods.filter(_._2.isVirtual).map { case ((cr, mr), a) => mr -> a }

@@ -4,12 +4,12 @@ sealed abstract class Klass {
   def name: String = ref.name
   def ref: ClassRef
   def methodBody(cr: ClassRef, mr: MethodRef): MethodBody
-  def methods: Map[(ClassRef, MethodRef), MethodAttribute]
+  def instanceMethods: Map[(ClassRef, MethodRef), MethodAttribute]
   def instanceFieldAttributes: Map[(ClassRef, FieldRef), FieldAttribute]
   def virtualMethods: Set[MethodRef] =
-    methods.filter(_._2.isVirtual).map { case ((cr, mr), a) => mr }.toSet
+    instanceMethods.filter(_._2.isVirtual).map { case ((cr, mr), a) => mr }.toSet
   def hasVirtualMethod(ref: MethodRef): Boolean =
-    methods.exists { case ((c, m), a) => m == ref && a.isVirtual }
+    instanceMethods.exists { case ((c, m), a) => m == ref && a.isVirtual }
   def hasVirtualMethod(mr: String): Boolean =
     hasVirtualMethod(MethodRef.parse(mr, ref.classLoader))
   def resolveVirtualMethod(mr: MethodRef): ClassRef
@@ -67,24 +67,24 @@ sealed abstract class Klass {
         this.virtualMethods
           .map { mr => this.resolveVirtualMethod(mr) -> mr }
           .filter { case (cr, _) => cr < ClassRef.Object }
-          .filter { case k @ (cr, mr) => (cr < superRef) || !this.methods(k).isFinal }
-          .filterNot { case k @ (cr, mr) => this.methods(k).isNative }
-      el.logCMethods("overridable virtual methods", overridableVirtualMethods)
+          .filter { case k @ (cr, mr) => (cr < superRef) || !this.instanceMethods(k).isFinal }
+          .filterNot { case k @ (cr, mr) => this.instanceMethods(k).isNative }
+      el.logCMethods("overridable virtual instanceMethods", overridableVirtualMethods)
 
       val requiredMethods =
         this.extendMethods(overridableVirtualMethods)
           .filter { case (cr, _) => cr < ClassRef.Object }
-          .filterNot { case k @ (cr, mr) => this.methods(k).isNative }
+          .filterNot { case k @ (cr, mr) => this.instanceMethods(k).isNative }
           .map { case k @ (cr, mr) => k -> this.dataflow(cr, mr) }
           .toMap
-      el.logCMethods("required methods", requiredMethods.keys)
+      el.logCMethods("required instanceMethods", requiredMethods.keys)
 
       val methodRenaming =
         requiredMethods.collect {
           case (k @ (cr, mr), df) if !overridableVirtualMethods.contains(k) =>
             (k -> mr.anotherUniqueName())
         }
-      el.logCMethods("renamed methods", methodRenaming.keys)
+      el.logCMethods("renamed instanceMethods", methodRenaming.keys)
 
       val requiredFields =
         requiredMethods.values.flatMap { df => df.usedFieldsOf(DataSource.This, this) }
@@ -172,7 +172,7 @@ object Klass {
       if (mr.isInit) MethodBody.parse(allJConstructors(cr -> mr))
       else MethodBody.parse(allJMethods(cr -> mr))
 
-    override lazy val methods: Map[(ClassRef, MethodRef), MethodAttribute] =
+    override lazy val instanceMethods: Map[(ClassRef, MethodRef), MethodAttribute] =
       allJMethods.map { case (k, m) => k -> MethodAttribute.from(m) }.filterNot(_._2.isStatic)
 
     override def instanceFieldAttributes =
@@ -233,8 +233,8 @@ object Klass {
       else if (ref < cr) `super`.methodBody(cr, mr)
       else throw new IllegalArgumentException(s"Method not found: ${cr.pretty}.${mr.str}")
 
-    override lazy val methods =
-      `super`.methods ++ declaredMethods.map {
+    override lazy val instanceMethods =
+      `super`.instanceMethods ++ declaredMethods.map {
         case (k, v) => (ref -> k) -> v.attribute
       }
 
