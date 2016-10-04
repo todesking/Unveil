@@ -17,7 +17,7 @@ sealed abstract class Klass {
   def hasInstanceField(cr: ClassRef, fr: FieldRef): Boolean =
     instanceFieldAttributes.contains(cr -> fr)
   def dataflow(cr: ClassRef, mr: MethodRef): DataFlow =
-    new DataFlow(methodBody(cr, mr), this, Map(), None)
+    methodBody(cr, mr).dataflow(this)
   def pretty: String = Pretty.format_Klass(this)
 
   // TODO: interface field???

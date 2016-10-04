@@ -218,7 +218,11 @@ object Instance {
     override def thisRef = klass.ref
   }
 
-  class Given[A <: AnyRef](override val klass: Klass, override val fieldValues: Map[(ClassRef, FieldRef), Data]) extends Abstract[A] with Equality.Reference {
+  class Given[A <: AnyRef](override val klass: Klass, valueOverrides: Map[(ClassRef, FieldRef), Data]) extends Abstract[A] with Equality.Reference {
+    override lazy val fieldValues =
+      klass.instanceFieldAttributes.map { case (k@(cr, fr), a) =>
+        k -> valueOverrides.get(k).getOrElse(Data.Unknown(fr.typeRef))
+      }
     override def thisRef = klass.ref
     override def pretty = s"<given instance of ${klass.ref}>"
   }

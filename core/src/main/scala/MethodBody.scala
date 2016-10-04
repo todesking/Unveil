@@ -74,9 +74,10 @@ ${codeFragment.pretty}"""
 
   // TODO: refactor
   def dataflow(self: Instance[_ <: AnyRef]): DataFlow =
-    new DataFlow(this, self.klass, self.fieldValues, Some(self))
+    new DataFlow(this, self)
 
-  def dataflow(klass: Klass): DataFlow = new DataFlow(this, klass, Map(), None)
+  def dataflow(klass: Klass): DataFlow =
+    new DataFlow(this, new Instance.Given(klass, Map()))
 }
 
 object MethodBody {

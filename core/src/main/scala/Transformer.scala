@@ -203,13 +203,13 @@ object Transformer {
                   // TODO[BUG]: resolve special
                   cr
                 case invokevirtual(cr, mr) =>
-                  df.klass.resolveVirtualMethod(mr)
+                  df.instance.resolveVirtualMethod(mr)
                 case invokeinterface(cr, mr, _) =>
-                  df.klass.resolveVirtualMethod(mr)
+                  df.instance.resolveVirtualMethod(mr)
               }
             val calleeDf =
-              if (ignore.contains(cr -> mr)) df.klass.dataflow(cr, mr)
-              else inline(df.klass.dataflow(cr, mr), ignore + (cr -> mr), el).dataflow(df.klass)
+              if (ignore.contains(cr -> mr)) df.instance.dataflow(cr, mr)
+              else inline(df.instance.dataflow(cr, mr), ignore + (cr -> mr), el).dataflow(df.instance)
 
             // TODO[BUG]: if(calleeDf.localModified(0)) ...
             val argOffset = if (calleeDf.body.isStatic) localOffset else localOffset + 1

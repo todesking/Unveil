@@ -8,7 +8,7 @@ import scala.collection.mutable
 
 import java.lang.reflect.{ Method => JMethod, Constructor => JConstructor }
 
-class DataFlow(val body: MethodBody, val klass: Klass, val fieldValues: Map[(ClassRef, FieldRef), Data], instance: Option[Instance[_ <: AnyRef]]) {
+class DataFlow(val body: MethodBody, val instance: Instance[_ <: AnyRef]) {
 
   // TODO: detailed values from merge
   def possibleValues(l: Bytecode.Label, p: DataPort): Seq[Data] =
@@ -158,9 +158,7 @@ class DataFlow(val body: MethodBody, val klass: Klass, val fieldValues: Map[(Cla
   lazy val initialFrame: Frame = {
     val thisData =
       if (body.isStatic) None
-      else instance.map { i =>
-        Some(FrameItem(DataSource.This, Data.reference(i)))
-      } getOrElse Some(FrameItem(DataSource.This, Data.UnknownReference(klass, fieldValues)))
+      else Some(FrameItem(DataSource.This, Data.reference(instance)))
     val argData = body.descriptor.args.zipWithIndex.flatMap {
       case (t, i) =>
         val source = DataSource.Argument(i)
@@ -263,7 +261,7 @@ class DataFlow(val body: MethodBody, val klass: Klass, val fieldValues: Map[(Cla
   def pretty: String = {
     val format = "L%03d"
     def formatData(l: Bytecode.Label, p: DataPort, d: Data): String = {
-      val typeStr = if (d.typeRef == klass.ref.toTypeRef) "this.class" else d.typeRef.toString
+      val typeStr = if (d.typeRef == instance.klass.ref.toTypeRef) "this.class" else d.typeRef.toString
       val data = s"$typeStr = ${d.valueString}"
       isThis(l, p).fold {
         s"$data(this?)"
