@@ -8,7 +8,7 @@ import scala.collection.mutable
 
 import java.lang.reflect.{ Method => JMethod, Constructor => JConstructor }
 
-class DataFlow(val body: MethodBody, val klass: Klass, val fieldValues: Map[(ClassRef, FieldRef), Data]) {
+class DataFlow(val body: MethodBody, val klass: Klass, val fieldValues: Map[(ClassRef, FieldRef), Data], instance: Option[Instance[_ <: AnyRef]]) {
 
   // TODO: detailed values from merge
   def possibleValues(l: Bytecode.Label, p: DataPort): Seq[Data] =
@@ -58,7 +58,7 @@ class DataFlow(val body: MethodBody, val klass: Klass, val fieldValues: Map[(Cla
     isInstance(l, p, i) != Some(false)
 
   def mustInstance(l: Bytecode.Label, p: DataPort, i: Instance[_ <: AnyRef]): Boolean =
-    isInstance(l, p, i) getOrElse { throw new RuntimeException(s"umbigious: $l $p") }
+    isInstance(l, p, i) getOrElse { throw new RuntimeException(s"ambigious: $l $p") }
 
   def isThis(l: Bytecode.Label, p: DataPort): Option[Boolean] =
     dataSource(l, p).is(DataSource.This)
@@ -71,7 +71,7 @@ class DataFlow(val body: MethodBody, val klass: Klass, val fieldValues: Map[(Cla
       case (agg, (label, bc)) =>
         import Bytecode._
         bc match {
-          case bc: InstanceFieldAccess if isInstance(label, bc.objectref, i).get =>
+          case bc: InstanceFieldAccess if mustInstance(label, bc.objectref, i) =>
             agg + (i.resolveField(bc.classRef, bc.fieldRef) -> bc.fieldRef)
           case _ => agg
         }
@@ -83,7 +83,7 @@ class DataFlow(val body: MethodBody, val klass: Klass, val fieldValues: Map[(Cla
         import Bytecode._
         bc match {
           case bc: InstanceFieldAccess if dataSource(label, bc.objectref).may(src) =>
-            agg + (klass.resolveField(bc.classRef, bc.fieldRef) -> bc.fieldRef)
+            agg + (klass.resolveInstanceField(bc.classRef, bc.fieldRef) -> bc.fieldRef)
           case _ => agg
         }
     }
@@ -156,7 +156,11 @@ class DataFlow(val body: MethodBody, val klass: Klass, val fieldValues: Map[(Cla
       })
 
   lazy val initialFrame: Frame = {
-    val thisData = if (body.isStatic) None else Some(FrameItem(DataSource.This, Data.Unknown(klass.ref.toTypeRef)))
+    val thisData =
+      if (body.isStatic) None
+      else instance.map { i =>
+        Some(FrameItem(DataSource.This, Data.Reference(i)))
+      } getOrElse Some(FrameItem(DataSource.This, Data.UnknownReference(klass, fieldValues)))
     val argData = body.descriptor.args.zipWithIndex.flatMap {
       case (t, i) =>
         val source = DataSource.Argument(i)

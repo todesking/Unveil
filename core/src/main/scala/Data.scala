@@ -44,6 +44,15 @@ object Data {
     override def value = None
   }
 
+  case class UnknownReference(
+    klass: Klass,
+    fieldValues: Map[(ClassRef, FieldRef), Data]
+  ) extends Data with Equality.Reference {
+    override def typeRef = klass.ref.toTypeRef
+    override def valueString = "???"
+    override def value = None
+  }
+
   sealed abstract class Concrete extends Known {
     def concreteValue: Any
     override final def value = Some(concreteValue)
@@ -56,6 +65,12 @@ object Data {
   case class ConcretePrimitive(override val typeRef: TypeRef.Primitive, override val concreteValue: AnyVal) extends Concrete {
     // TODO: require(typeRef.isValue(concreteValue))
     override def valueString = concreteValue.toString
+  }
+  // TODO: refactor
+  case class Reference(instance: Instance[_ <: AnyRef]) extends Known {
+    override def typeRef = instance.thisRef.toTypeRef
+    override def value = None
+    override def valueString = instance.toString
   }
   case class ConcreteReference(instance: Instance.Concrete[_ <: AnyRef]) extends Concrete {
     override def typeRef: TypeRef.Reference = instance.thisRef.toTypeRef

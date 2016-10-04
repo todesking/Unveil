@@ -493,6 +493,12 @@ object Bytecode {
             val field = instance.fields(instance.resolveField(classRef, fieldRef) -> fieldRef)
             if (field.isFinal) field.data
             else Data.Unknown(fieldRef.descriptor.typeRef)
+          case Data.Reference(instance) =>
+            val field = instance.fields(instance.resolveField(classRef, fieldRef) -> fieldRef)
+            if (field.isFinal) field.data
+            else Data.Unknown(fieldRef.descriptor.typeRef)
+          case Data.UnknownReference(klass, fieldValues) =>
+            fieldValues.get(klass.resolveInstanceField(classRef, fieldRef) -> fieldRef) getOrElse Data.Unknown(fieldRef.descriptor.typeRef)
           case _ =>
             Data.Unknown(fieldRef.descriptor.typeRef)
         }

@@ -45,7 +45,7 @@ sealed abstract class Instance[A <: AnyRef] {
     virtualMethods.filterNot(_._2.isFinal).filterNot(_._2.isNative)
 
   final def fieldKeys: Set[(ClassRef, FieldRef)] =
-    klass.fieldAttributes.keySet
+    klass.instanceFieldAttributes.keySet
 
   // TODO: change to instanceFields
   def fields: Map[(ClassRef, FieldRef), Field]
@@ -55,7 +55,7 @@ sealed abstract class Instance[A <: AnyRef] {
 
   // TODO: interface field???
   def resolveField(cr: ClassRef, fr: FieldRef): ClassRef =
-    klass.resolveField(cr, fr)
+    klass.resolveInstanceField(cr, fr)
 
   def duplicate[B >: A <: AnyRef: ClassTag](el: EventLogger): Instance[B]
 
@@ -110,7 +110,7 @@ object Instance {
       Instance.duplicate(this, this, thisRef, el)
 
     override lazy val fields: Map[(ClassRef, FieldRef), Field] =
-      klass.fieldAttributes
+      klass.instanceFieldAttributes
         .filterNot(_._2.isStatic)
         .map { case (k @ (cr, fr), a) => k -> klass.readField(value, cr, fr) }
 
@@ -191,7 +191,7 @@ object Instance {
       )
 
     override lazy val fields: Map[(ClassRef, FieldRef), Field] =
-      klass.fieldAttributes.map {
+      klass.instanceFieldAttributes.map {
         case (k @ (cr, fr), fa) =>
           k -> Field(fr.descriptor, fa, fieldValues(k))
       }

@@ -41,7 +41,7 @@ ${
     }
   // Super fields:
 ${
-      klass.fieldAttributes.filterNot(_._1._1 == klass.ref).map {
+      klass.instanceFieldAttributes.filterNot(_._1._1 == klass.ref).map {
         case ((cr, fr), attr) => s"$cr.$fr ${attr}"
       }.mkString("\n")
     }

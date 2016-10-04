@@ -5,7 +5,7 @@ sealed abstract class Klass {
   def ref: ClassRef
   def methodBody(cr: ClassRef, mr: MethodRef): MethodBody
   def methods: Map[(ClassRef, MethodRef), MethodAttribute]
-  def fieldAttributes: Map[(ClassRef, FieldRef), FieldAttribute]
+  def instanceFieldAttributes: Map[(ClassRef, FieldRef), FieldAttribute]
   def virtualMethods: Set[MethodRef] =
     methods.filter(_._2.isVirtual).map { case ((cr, mr), a) => mr }.toSet
   def hasVirtualMethod(ref: MethodRef): Boolean =
@@ -14,17 +14,17 @@ sealed abstract class Klass {
     hasVirtualMethod(MethodRef.parse(mr, ref.classLoader))
   def resolveVirtualMethod(mr: MethodRef): ClassRef
   def superKlass: Option[Klass]
-  def hasField(cr: ClassRef, fr: FieldRef): Boolean =
-    fieldAttributes.contains(cr -> fr)
+  def hasInstanceField(cr: ClassRef, fr: FieldRef): Boolean =
+    instanceFieldAttributes.contains(cr -> fr)
   def dataflow(cr: ClassRef, mr: MethodRef): DataFlow =
-    new DataFlow(methodBody(cr, mr), this, Map())
+    new DataFlow(methodBody(cr, mr), this, Map(), None)
   def pretty: String = Pretty.format_Klass(this)
 
   // TODO: interface field???
-  def resolveField(cr: ClassRef, fr: FieldRef): ClassRef =
-    if (hasField(cr, fr)) cr
-    else Reflect.superClassOf(cr).map { sc => resolveField(sc, fr) } getOrElse {
-      throw new IllegalArgumentException(s"Field resolution failed: $cr.$fr")
+  def resolveInstanceField(cr: ClassRef, fr: FieldRef): ClassRef =
+    if (hasInstanceField(cr, fr)) cr
+    else Reflect.superClassOf(cr).map { sc => resolveInstanceField(sc, fr) } getOrElse {
+      throw new IllegalArgumentException(s"Instance field resolution failed: $cr.$fr")
     }
 
   // TODO: rename this method
@@ -43,7 +43,7 @@ sealed abstract class Klass {
   }
 
   def requireWholeInstanceField(fvs: Set[(ClassRef, FieldRef)]): Unit = {
-    val nonStaticFields = fieldAttributes.filterNot(_._2.isStatic).keySet
+    val nonStaticFields = instanceFieldAttributes.keySet
     if((nonStaticFields -- fvs).nonEmpty) {
       throw new IllegalArgumentException(s"Field value missing: ${nonStaticFields -- fvs}")
     } else if((fvs -- nonStaticFields).nonEmpty) {
@@ -88,20 +88,20 @@ sealed abstract class Klass {
 
       val requiredFields =
         requiredMethods.values.flatMap { df => df.usedFieldsOf(DataSource.This, this) }
-          .map { case (cr, fr) => this.resolveField(cr, fr) -> fr }
+          .map { case (cr, fr) => this.resolveInstanceField(cr, fr) -> fr }
           .toSet
       el.logCFields("required fields", requiredFields)
 
       requiredFields foreach {
         case k @ (cr, fr) =>
-          val fa = this.fieldAttributes(k)
+          val fa = this.instanceFieldAttributes(k)
           if (cr >= superRef && fa.isPrivate && !fa.isFinal)
             throw new TransformException(s"Required field is non-final private: $cr.$fr")
       }
 
       val fieldRenaming =
         requiredFields
-          .filter { case k @ (cr, fr) => cr < superRef || this.fieldAttributes(k).isPrivate }
+          .filter { case k @ (cr, fr) => cr < superRef || this.instanceFieldAttributes(k).isPrivate }
           .map { case k @ (cr, fr) => k -> fr.anotherUniqueName() }
           .toMap
       el.logCFields("renamed fields", fieldRenaming.keys)
@@ -134,7 +134,7 @@ sealed abstract class Klass {
                   bc.rewriteMethodRef(thisRef, newMr)
                 }
               case (label, bc: InstanceFieldAccess) if df.mustThis(label, bc.objectref) =>
-                fieldRenaming.get(this.resolveField(bc.classRef, bc.fieldRef) -> bc.fieldRef).fold(bc) { newFr =>
+                fieldRenaming.get(this.resolveInstanceField(bc.classRef, bc.fieldRef) -> bc.fieldRef).fold(bc) { newFr =>
                   bc.rewriteFieldRef(thisRef, newFr)
                 }
             }.makeNonFinal
@@ -144,7 +144,7 @@ sealed abstract class Klass {
       val thisFields =
         fieldRenaming.map {
           case (k @ (cr, fr), newFr) =>
-            newFr -> this.fieldAttributes(k)
+            newFr -> this.instanceFieldAttributes(k)
         }
       el.logFields("thisFields", thisFields.keys)
 
@@ -175,8 +175,8 @@ object Klass {
     override lazy val methods: Map[(ClassRef, MethodRef), MethodAttribute] =
       allJMethods.map { case (k, m) => k -> MethodAttribute.from(m) }.filterNot(_._2.isStatic)
 
-    override def fieldAttributes =
-      allJFields.mapValues(FieldAttribute.from(_))
+    override def instanceFieldAttributes =
+      allJFields.mapValues(FieldAttribute.from(_)).filter(!_._2.isStatic)
 
     def readField(obj: AnyRef, cr: ClassRef, fr: FieldRef): Field =
       Field.from(allJFields(cr -> fr), obj)
@@ -212,8 +212,10 @@ object Klass {
       val declaredMethods: Map[MethodRef, MethodBody],
       val declaredFields: Map[FieldRef, FieldAttribute]
   ) extends Klass with Equality.Reference {
-    override def fieldAttributes: Map[(ClassRef, FieldRef), FieldAttribute] =
-      `super`.fieldAttributes ++ declaredFields.map { case (fr, fa) => (ref, fr) -> fa }
+    require(!declaredFields.exists(_._2.isStatic))
+
+    override def instanceFieldAttributes: Map[(ClassRef, FieldRef), FieldAttribute] =
+      `super`.instanceFieldAttributes ++ declaredFields.map { case (fr, fa) => (ref, fr) -> fa }
 
     override def superKlass: Option[Klass] = Some(`super`)
 

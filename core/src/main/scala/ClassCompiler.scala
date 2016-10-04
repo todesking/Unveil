@@ -11,7 +11,7 @@ class ClassCompiler(klass: Klass.Modified, fieldValues: Map[(ClassRef, FieldRef)
     klass.declaredFields.keys.map { fr => fr -> fieldValues(klass.ref, fr) }.toSeq
 
   lazy val superFields =
-    klass.`super`.fieldAttributes.map { case (k, a) => k -> Field(k._2.descriptor, a, fieldValues(k)) }
+    klass.`super`.instanceFieldAttributes.map { case (k, a) => k -> Field(k._2.descriptor, a, fieldValues(k)) }
 
   lazy val superConstructor: Analyze.SetterConstructor =
     Analyze.findSetterConstructor(klass.`super`, superFields) getOrElse {
