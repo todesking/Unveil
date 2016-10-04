@@ -29,11 +29,17 @@ object Data {
         ConcretePrimitive(t1, v1)
       case (ConcreteReference(i1), ConcreteReference(i2)) if i1 == i2 =>
         ConcreteReference(i1)
+      case (AbstractReference(i1), AbstractReference(i2)) if i1 == i2 =>
+        AbstractReference(i1)
       case (Null, Null) => Null
-      // TODO: NewReference
       case (d1, d2) =>
         Unknown(TypeRef.common(d1.typeRef, d2.typeRef))
     }
+  }
+
+  def reference(i: Instance[_ <: AnyRef]): Reference = i match {
+    case i: Instance.Concrete[_] => ConcreteReference(i)
+    case i: Instance.Abstract[_] => AbstractReference(i)
   }
 
   sealed abstract class Known extends Data {
@@ -55,7 +61,6 @@ object Data {
 
   sealed abstract class Concrete extends Known {
     def concreteValue: Any
-    override final def value = Some(concreteValue)
   }
 
   case class Uninitialized(override val typeRef: TypeRef.Reference) extends Known with Equality.Reference {
@@ -65,29 +70,31 @@ object Data {
   case class ConcretePrimitive(override val typeRef: TypeRef.Primitive, override val concreteValue: AnyVal) extends Concrete {
     // TODO: require(typeRef.isValue(concreteValue))
     override def valueString = concreteValue.toString
+    override def value = Some(concreteValue)
   }
-  // TODO: refactor
-  case class Reference(instance: Instance[_ <: AnyRef]) extends Known {
-    override def typeRef = instance.thisRef.toTypeRef
-    override def value = None
-    override def valueString = instance.toString
-  }
-  case class ConcreteReference(instance: Instance.Concrete[_ <: AnyRef]) extends Concrete {
-    override def typeRef: TypeRef.Reference = instance.thisRef.toTypeRef
-    def classRef: ClassRef = typeRef.classRef
-    override def valueString = "<object>"
-    override def concreteValue = instance.materialize(new EventLogger).value
-    override def isInstance(i: Instance[_ <: AnyRef]) = instance == i
-  }
-  case class NewReference(instance: Instance.New[_ <: AnyRef]) extends Known {
-    override def typeRef = instance.thisRef.toTypeRef
-    override def value = None
-    override def valueString = instance.toString
-  }
+
   case object Null extends Concrete {
     override def valueString = "null"
     override val typeRef = TypeRef.Null
     override val concreteValue = null
+    override def value = Some(concreteValue)
+  }
+
+  sealed trait Reference extends Known with Equality.Delegate {
+    override def canEqual(rhs: Any) = rhs.isInstanceOf[Reference]
+    override def equalityObject = instance
+
+    val instance: Instance[_ <: AnyRef]
+    override def typeRef = instance.thisRef.toTypeRef
+    override def value = instance.valueOption
+    override def valueString = instance.toString
+  }
+
+  case class ConcreteReference(override val instance: Instance.Concrete[_ <: AnyRef]) extends Concrete with Reference {
+    override def concreteValue = instance.value
+  }
+
+  case class AbstractReference(override val instance: Instance.Abstract[_ <: AnyRef]) extends Known with Reference {
   }
 }
 

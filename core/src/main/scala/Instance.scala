@@ -15,7 +15,7 @@ import Syntax.Upcast
 sealed abstract class Instance[A <: AnyRef] {
   def klass: Klass = ???
   def escaped: Boolean = ???
-  def toData: Data
+  def toData: Data = Data.reference(this)
 
   // TODO: rename virtualMethodBody
   final def methodBody(ref: MethodRef): MethodBody =
@@ -60,6 +60,8 @@ sealed abstract class Instance[A <: AnyRef] {
 
   def duplicate1(el: EventLogger): Instance.Duplicate[A]
 
+  def valueOption: Option[A]
+
   def usedMethodsOf(i: Instance[_ <: AnyRef]): Set[(ClassRef, MethodRef)] =
     analyzeMethods(Set.empty[(ClassRef, MethodRef)]) { (agg, cr, mr, df) => agg ++ df.usedMethodsOf(i) }
 
@@ -81,15 +83,24 @@ object Instance {
 
   sealed abstract class Concrete[A <: AnyRef] extends Instance[A] {
     def materialize(el: EventLogger): Instance.Original[A]
+    def value: A
 
-    override def toData = Data.ConcreteReference(this)
     override def duplicate[B >: A <: AnyRef: ClassTag](el: EventLogger): Instance.Duplicate[B]
   }
-  sealed abstract class Abstract
+  sealed abstract class Abstract[A <: AnyRef] extends Instance[A] {
+    final override def valueOption = None
+  }
 
-  case class Original[A <: AnyRef](value: A)
-      extends Concrete[A] with Equality.Reference {
+  case class Original[A <: AnyRef](value: A) extends Concrete[A] {
     require(value != null)
+
+    override def hashCode = System.identityHashCode(value)
+    override def equals(rhs: Any) = rhs match {
+      case Original(v) => this.value eq v
+      case _ => false
+    }
+
+    override def valueOption = Some(value)
 
     override val klass: Klass.Native = Klass.from(value.getClass)
 
@@ -126,6 +137,9 @@ object Instance {
   ) extends Concrete[A] with Equality.Reference {
     require(orig.klass.ref <= klass.`super`.ref)
     klass.requireWholeInstanceField(fieldValues.keySet)
+
+    override def value = materialize(new EventLogger).value
+    override def valueOption = Some(value)
 
     override def thisRef: ClassRef.Extend =
       klass.ref
@@ -201,12 +215,9 @@ object Instance {
         .newInstance[A]()
   }
 
-  class New[A <: AnyRef](val classRef: ClassRef, constructor: MethodDescriptor)
-      extends Instance[A] {
+  class New[A <: AnyRef](val classRef: ClassRef, constructor: MethodDescriptor) extends Abstract[A] {
     def constructorSSA: DataFlow.SSA =
       dataflow(classRef, MethodRef.constructor(constructor)).toSSA
-    override def toData: Data.NewReference =
-      Data.NewReference(this)
     override def duplicate[B >: A <: AnyRef](el: com.todesking.unveil.EventLogger)(implicit evidence$1: scala.reflect.ClassTag[B]): com.todesking.unveil.Instance[B] = ???
     override def duplicate1(el: com.todesking.unveil.EventLogger): com.todesking.unveil.Instance.Duplicate[A] = ???
     override def fields: Map[(com.todesking.unveil.ClassRef, com.todesking.unveil.FieldRef), com.todesking.unveil.Field] = ???

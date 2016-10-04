@@ -159,7 +159,7 @@ class DataFlow(val body: MethodBody, val klass: Klass, val fieldValues: Map[(Cla
     val thisData =
       if (body.isStatic) None
       else instance.map { i =>
-        Some(FrameItem(DataSource.This, Data.Reference(i)))
+        Some(FrameItem(DataSource.This, Data.reference(i)))
       } getOrElse Some(FrameItem(DataSource.This, Data.UnknownReference(klass, fieldValues)))
     val argData = body.descriptor.args.zipWithIndex.flatMap {
       case (t, i) =>
