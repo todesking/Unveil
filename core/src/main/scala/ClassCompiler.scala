@@ -17,7 +17,7 @@ class ClassCompiler(klass: Klass.Modified, fieldValues: Map[(ClassRef, FieldRef)
     // TODO: refactor
     el.section(s"Find super ctor from ${klass.ref.superClassRef}") { el =>
       val ctors = Analyze.setterConstructorsTry(klass.ref.superClassRef.loadKlass)
-      import scala.util.{Success, Failure}
+      import scala.util.{ Success, Failure }
       el.log(s"${ctors.size} ctor candidate found")
       ctors.foreach {
         case Success(ctor) =>

@@ -44,9 +44,9 @@ sealed abstract class Klass {
 
   def requireWholeInstanceField(fvs: Set[(ClassRef, FieldRef)]): Unit = {
     val nonStaticFields = instanceFieldAttributes.keySet
-    if((nonStaticFields -- fvs).nonEmpty) {
+    if ((nonStaticFields -- fvs).nonEmpty) {
       throw new IllegalArgumentException(s"Field value missing: ${nonStaticFields -- fvs}")
-    } else if((fvs -- nonStaticFields).nonEmpty) {
+    } else if ((fvs -- nonStaticFields).nonEmpty) {
       throw new IllegalArgumentException(s"Unknown field value: ${fvs -- nonStaticFields}")
     }
   }

@@ -212,7 +212,7 @@ object Instance {
       dataflow(klass.ref, MethodRef.constructor(constructor)).toSSA
 
     override lazy val fieldValues =
-      klass.instanceFieldAttributes.map { case (k@(cr, fr), a) => k -> Data.Unknown(fr.typeRef) }
+      klass.instanceFieldAttributes.map { case (k @ (cr, fr), a) => k -> Data.Unknown(fr.typeRef) }
 
     override def pretty: String = s"new ${klass.ref}(${constructor.argsStr})"
     override def thisRef = klass.ref
@@ -231,11 +231,11 @@ object Instance {
         o.fields.flatMap {
           case (k @ (cr, fr), field) =>
             fieldRenaming.get(k).fold {
-              if(cr < superRef) Map.empty[(ClassRef, FieldRef), Data.Concrete]
+              if (cr < superRef) Map.empty[(ClassRef, FieldRef), Data.Concrete]
               else Map(k -> field.data)
             } { newFr =>
-              if(cr < superRef)
-                Map( (klass.ref.asInstanceOf[ClassRef] -> newFr) -> field.data)
+              if (cr < superRef)
+                Map((klass.ref.asInstanceOf[ClassRef] -> newFr) -> field.data)
               else
                 Map(
                   k -> field.data,

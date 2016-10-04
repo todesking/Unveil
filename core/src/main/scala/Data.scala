@@ -51,8 +51,8 @@ object Data {
   }
 
   case class UnknownReference(
-    klass: Klass,
-    fieldValues: Map[(ClassRef, FieldRef), Data]
+      klass: Klass,
+      fieldValues: Map[(ClassRef, FieldRef), Data]
   ) extends Data with Equality.Reference {
     override def typeRef = klass.ref.toTypeRef
     override def valueString = "???"

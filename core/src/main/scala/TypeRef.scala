@@ -71,10 +71,10 @@ object TypeRef {
     override val defaultValue: Any
   ) extends Public
 
-  case object Byte extends Primitive("int", "B", java.lang.Byte.TYPE, 0) with SingleWord
+  case object Byte extends Primitive("int", "B", java.lang.Byte.TYPE, 0.toByte) with SingleWord
   case object Boolean extends Primitive("bool", "Z", java.lang.Boolean.TYPE, false) with SingleWord
-  case object Char extends Primitive("char", "C", java.lang.Character.TYPE, 0) with SingleWord
-  case object Short extends Primitive("short", "S", java.lang.Short.TYPE, 0) with SingleWord
+  case object Char extends Primitive("char", "C", java.lang.Character.TYPE, '\u0000') with SingleWord
+  case object Short extends Primitive("short", "S", java.lang.Short.TYPE, 0.toShort) with SingleWord
   case object Int extends Primitive("int", "I", java.lang.Integer.TYPE, 0) with SingleWord
   case object Float extends Primitive("float", "F", java.lang.Float.TYPE, 0.0f) with SingleWord
   case object Long extends Primitive("long", "J", java.lang.Long.TYPE, 0L) with DoubleWord

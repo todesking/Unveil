@@ -112,7 +112,7 @@ class EventLogger {
       )
     case Event.FieldValues(desc, fvs) =>
       s"$desc =" + (
-        if(fvs.isEmpty) ""
+        if (fvs.isEmpty) ""
         else fvs.map { case ((cr, fr), v) => s"- $cr\n     .$fr = $v" }.mkString("\n", "\n", "")
       )
   }
