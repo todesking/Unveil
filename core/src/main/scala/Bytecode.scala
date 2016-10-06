@@ -468,6 +468,52 @@ object Bytecode {
     override def withNewClassRef(newRef: ClassRef) = copy(classRef = newRef)
     override def withNewMehtodRef(newRef: MethodRef) = copy(methodRef = newRef)
     override def pretty = s"invokespecial ${classRef.pretty}.${methodRef.str}"
+    override def nextFrame(l: Bytecode.Label, f: Frame) = {
+      require(f.stack.size >= methodRef.args.size + 1)
+      f.stack(methodRef.args.size) match {
+        case FrameItem(ds @ DataSource.New(sl, sp), Data.Uninitialized(t)) =>
+          // should ctor
+          if(!methodRef.isInit) {
+            throw new IllegalArgumentException(s"expect ctor call but ${methodRef}")
+          }
+          if(t != classRef) {
+            throw new IllegalArgumentException(s"Illegal ctor invocation: instance is $t and ctor is $classRef.$methodRef")
+          }
+          if(!classRef.isInstanceOf[ClassRef.Concrete]) {
+            throw new IllegalArgumentException(s"Unexpected abstract ClassRef: ${classRef}")
+          }
+          assert(methodRef.ret == TypeRef.Void)
+          val popped =
+            args.zip(methodRef.args).foldRight(update(l, f)) {
+              case ((a, t), u) =>
+                if (t.isDoubleWord) u.pop2(a)
+                else u.pop1(a)
+            }.pop1(objectref)
+          popped.copy(
+            frameItems =
+              popped.frameItems + ((sl, sp) -> FrameItem(
+                ds,
+                Data.AbstractReference(
+                  new Instance.New[AnyRef](
+                    classRef.asInstanceOf[ClassRef.Concrete].loadKlass,
+                    methodRef.descriptor
+                  )
+                )
+              ))
+          )
+        case FrameItem(src, Data.Uninitialized(t)) if src.must(DataSource.This) =>
+          // super ctor call in ctor
+          super.nextFrame(l, f)
+        case FrameItem(src, Data.Uninitialized(t)) =>
+          // unexpected
+          throw new IllegalArgumentException(s"Unexpected ctor call: data src = $src")
+        case fi => // normal
+          if(methodRef.isInit) {
+            throw new IllegalArgumentException(s"Unexpected ctor call: data src = ${fi.source}")
+          }
+          super.nextFrame(l, f)
+      }
+    }
   }
   case class invokestatic(override val classRef: ClassRef, override val methodRef: MethodRef) extends InvokeClassMethod {
     override type Self = invokestatic
@@ -536,6 +582,6 @@ object Bytecode {
     override def inputs = Seq()
     override def output = Some(objectref)
     override def nextFrame(l: Bytecode.Label, f: Frame) =
-      update(l, f).push(output, FrameItem(DataSource.New(l, objectref), Data.Uninitialized(TypeRef.Reference(classRef))))
+      update(l, f).push(output, FrameItem(DataSource.New(l, objectref), Data.Uninitialized(classRef)))
   }
 }

@@ -484,6 +484,7 @@ object Javassist {
       val jumpTargets: Map[(Bytecode.Label, JumpTarget), Bytecode.Label] =
         jumps.map { case ((l, jt), index) => (l -> jt) -> addr2label(index) }.toMap
       Some(MethodBody(
+        mRef.isInit,
         mRef.descriptor,
         MethodAttribute.from(ctMethod.getModifiers),
         new CodeFragment.Complete(bcs.toSeq, jumpTargets)

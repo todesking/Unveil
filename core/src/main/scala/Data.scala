@@ -63,7 +63,8 @@ object Data {
     def concreteValue: Any
   }
 
-  case class Uninitialized(override val typeRef: TypeRef.Reference) extends Known with Equality.Reference {
+  case class Uninitialized(classRef: ClassRef) extends Known with Equality.Reference {
+    override def typeRef = classRef.toTypeRef
     override val valueString = s"new $typeRef(uninitialized)"
     override val value = None
   }

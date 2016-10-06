@@ -11,6 +11,7 @@ import java.lang.reflect.{ Method => JMethod, Constructor => JConstructor }
 import com.todesking.scalapp.syntax._
 
 case class MethodBody(
+    isInit: Boolean,
     descriptor: MethodDescriptor,
     attribute: MethodAttribute,
     codeFragment: CodeFragment.Complete

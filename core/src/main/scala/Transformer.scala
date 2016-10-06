@@ -276,6 +276,12 @@ object Transformer {
 
     private[this] def inline(df: DataFlow, el: EventLogger): MethodBody = {
       import Bytecode._
+
+      el.log("New instances:")
+      df.newInstances.foreach { case ((l, p), i) =>
+        s"  - ${l},${p}: ${i}"
+      }
+
       // TODO: check all required method is inlinable
       val inlinables: Map[(Bytecode.Label, DataPort.Out), (Instance.New[_ <: AnyRef], Map[(ClassRef, FieldRef), Int])] =
         // TODO: check used method only in ni.escaped
@@ -289,6 +295,12 @@ object Transformer {
             case (v, d) =>
               v -> (d -> d.klass.instanceFieldAttributes.keys.zipWithIndex.toMap)
           }.toMap
+
+      el.log("Inlinable:")
+      df.newInstances.foreach { case ((l, p), i) =>
+        s"  - ${l},${p}: ${i}"
+      }
+
       def toInlineForm(
         base: DataFlow,
         fieldMap: Map[(ClassRef, FieldRef), Int],

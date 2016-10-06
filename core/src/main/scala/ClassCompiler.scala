@@ -41,6 +41,7 @@ class ClassCompiler(klass: Klass.Modified, fieldValues: Map[(ClassRef, FieldRef)
       thisFieldsSeq.zipWithIndex.map { case ((fr, f), i) => fr -> (i + 1) }
     import Bytecode._
     MethodBody(
+      true,
       descriptor = constructorDescriptor,
       MethodAttribute.Public,
       codeFragment = CodeFragment.bytecode(

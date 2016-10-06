@@ -28,7 +28,9 @@ class DataFlow(val body: MethodBody, val instance: Instance[_ <: AnyRef]) {
   }
 
   def dataSource(l: Bytecode.Label, p: DataPort): DataSource =
-    dataSources(l -> p)
+    dataSources.get(l -> p) getOrElse {
+      throw new IllegalArgumentException(s"DataSource not found: $l ${body.labelToBytecode.get(l)}, $p")
+    }
 
   // TODO: [BUG] track merge
   private[this] lazy val useSitesMap: Map[(Bytecode.Label, DataPort.Out), Map[Bytecode.Label, Set[DataPort.In]]] =
@@ -163,6 +165,7 @@ class DataFlow(val body: MethodBody, val instance: Instance[_ <: AnyRef]) {
   lazy val initialFrame: Frame = {
     val thisData =
       if (body.isStatic) None
+      else if(body.isInit) Some(FrameItem(DataSource.This, Data.Uninitialized(instance.klass.ref)))
       else Some(FrameItem(DataSource.This, Data.reference(instance)))
     val argData = body.descriptor.args.zipWithIndex.flatMap {
       case (t, i) =>
@@ -278,8 +281,8 @@ class DataFlow(val body: MethodBody, val instance: Instance[_ <: AnyRef]) {
     body.bytecode.map {
       case (label, bc) =>
         val base = s"${label.format(format)} ${bc.pretty}"
-        val in = bc.inputs.map { in => s"  # ${in.name}: ${possibleValues(label, in).map(formatData(label, in, _)).mkString(", ")}" }
-        val out = bc.output.map { out => s"  # ${out.name}: ${possibleValues(label, out).map(formatData(label, out, _)).mkString(", ")}" }.toSeq
+        val in = bc.inputs.map { in => s"  # ${in.name}: ${dataSource(label, in)}, ${possibleValues(label, in).map(formatData(label, in, _)).mkString(", ")}" }
+        val out = bc.output.map { out => s"  # ${out.name}: ${dataSource(label, out)}, ${possibleValues(label, out).map(formatData(label, out, _)).mkString(", ")}" }.toSeq
         (Seq(base) ++ in ++ out).mkString("\n")
     }.mkString("\n")
   }

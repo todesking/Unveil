@@ -3,10 +3,13 @@ package com.todesking.unveil
 import java.lang.reflect.{ Method => JMethod, Constructor }
 
 case class MethodRef(name: String, descriptor: MethodDescriptor) {
-  def str: String = name + descriptor.str
-  override def toString = name + descriptor.toString
+  require(!isInit || isVoid)
+
   def isInit: Boolean = name == "<init>"
   def isVoid: Boolean = descriptor.isVoid
+
+  def str: String = name + descriptor.str
+  override def toString = name + descriptor.toString
   def args: Seq[TypeRef.Public] = descriptor.args
   def ret: TypeRef.Public = descriptor.ret
   def renamed(newName: String): MethodRef = copy(name = newName)

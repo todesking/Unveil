@@ -262,6 +262,7 @@ class Spec extends FunSpec with Matchers {
           i0.addMethod(
             foo,
             MethodBody(
+              false,
               foo.descriptor,
               MethodAttribute.Public,
               CodeFragment.bytecode(
