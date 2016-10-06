@@ -3,6 +3,8 @@ package com.todesking.unveil
 abstract class CodeFragment {
   def bytecodeSeq: Seq[Bytecode]
 
+  def size: Int
+
   def incompleteJumpTargets: Map[(Bytecode.Label, JumpTarget), Either[String, Bytecode.Label]]
 
   def nameToLabel: Map[String, Bytecode.Label]
@@ -69,6 +71,8 @@ object CodeFragment {
       })
     }
 
+    override def size = bytecodeSeq.size
+
     override def nameToLabel = Map.empty
 
     override def incompleteJumpTargets: Map[(Bytecode.Label, JumpTarget), Either[String, Bytecode.Label]] =
@@ -122,9 +126,9 @@ object CodeFragment {
               } ++ cf.incompleteJumpTargets.map { case ((l, jt), dest) =>
                 (l.offset(start) -> jt) -> dest.fold(Left.apply, l => Right(l.offset(start)))
               }
-            if(n2l.keys.exists(cf.nameToLabel.keySet))
+            val newN2L = Algorithm.sharedNothingUnion(n2l, cf.nameToLabel) getOrElse {
               throw new IllegalArgumentException(s"Name conflict: ${n2l.keys.filter(cf.nameToLabel.keySet).mkString(", ")}")
-            val newN2L = n2l ++ cf.nameToLabel
+            }
             (newBcs, newJts, newN2L, offset + shift)
         }
       new CodeFragment.Partial(bcs, jts, n2l)
@@ -133,14 +137,15 @@ object CodeFragment {
 
   sealed abstract class Incomplete extends CodeFragment {
     override def complete(): Complete
-    def nameToLabel: Map[String, Bytecode.Label]
+    override def nameToLabel: Map[String, Bytecode.Label]
   }
 
   case class Partial(
-    bytecodeSeq: Seq[Bytecode],
+    override val bytecodeSeq: Seq[Bytecode],
     override val incompleteJumpTargets: Map[(Bytecode.Label, JumpTarget), Either[String, Bytecode.Label]],
     override val nameToLabel: Map[String, Bytecode.Label]
   ) extends Incomplete {
+    override def size = bytecodeSeq.size
     override def pretty = toString // TODO
     override def complete() =
       new Complete(
@@ -152,18 +157,53 @@ object CodeFragment {
       )
   }
 
-  case class Concat(items: Seq[CodeFragment], nameToLabel: Map[String, Bytecode.Label]) extends Incomplete {
+  case class Concat(items: Seq[CodeFragment], additionalNameToLabel: Map[String, Bytecode.Label]) extends Incomplete {
+    override val size = items.map(_.size).sum
     override def pretty = toString // TODO
     override lazy val bytecodeSeq = items.flatMap(_.bytecodeSeq)
-    override def incompleteJumpTargets = ???
+    override lazy val (incompleteJumpTargets, nameToLabel) = {
+      val (ijt, n2l, _) =
+        items.foldLeft((
+            Map.empty[(Bytecode.Label, JumpTarget), Either[String, Bytecode.Label]],
+            additionalNameToLabel,
+            0
+        )) { case ((ijt, n2l, offset), cf) =>
+          (
+            Algorithm.sharedNothingUnion(
+              ijt,
+              cf.incompleteJumpTargets.map {
+                case ((l, jt), dest) => (l.offset(offset) -> jt) -> dest.fold(Left.apply, l => Right(l.offset(offset)))
+              }
+            ).getOrElse { throw new AssertionError() },
+            Algorithm.sharedNothingUnion(
+              n2l,
+              cf.nameToLabel.mapValues(_.offset(offset))
+            ).getOrElse { throw new AssertionError() },
+            offset + cf.size
+          )
+        };
+      (
+        ijt.mapValues {
+          case Right(l) => Right(l)
+          case Left(name) => n2l.get(name).map(Right.apply) getOrElse Left(name)
+        },
+        n2l
+      )
+    }
     override def complete(): Complete = {
       ???
     }
     override def +(rhs: CodeFragment): Concat = rhs match {
-      case Concat(rItems, rNameToLabel) =>
-        if(nameToLabel.keys.exists(rNameToLabel.keySet))
-          throw new IllegalArgumentException(s"Name conflict: ${nameToLabel.keys.filter(rNameToLabel.keySet)}")
-        Concat(items ++ rItems, nameToLabel ++ rNameToLabel.mapValues { case l => l.offset(items.size) })
+      case Concat(rItems, an2l) =>
+        Concat(
+          items ++ rItems,
+          Algorithm.sharedNothingUnion(
+            additionalNameToLabel,
+            an2l.mapValues { case l => l.offset(items.size) }
+          ).getOrElse {
+            throw new IllegalArgumentException(s"Name conflict: ${additionalNameToLabel.keys.filter(an2l.keySet)}")
+          }
+        )
       case rhs => Concat(items :+ rhs, nameToLabel)
     }
     override def concatForm = this

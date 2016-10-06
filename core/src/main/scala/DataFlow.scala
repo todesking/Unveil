@@ -14,7 +14,11 @@ class DataFlow(val body: MethodBody, val instance: Instance[_ <: AnyRef]) {
   def possibleValues(l: Bytecode.Label, p: DataPort): Seq[Data] =
     Seq(dataValues(l -> p))
 
-  lazy val newInstances: Map[(Bytecode.Label, DataPort.Out), Instance.New[_ <: AnyRef]] = ???
+  lazy val newInstances: Map[(Bytecode.Label, DataPort.Out), Instance.New[_ <: AnyRef]] =
+    dataValues.collect {
+      case ((l, p), Data.AbstractReference(n: Instance.New[_])) => ((l -> p) -> n).asInstanceOf
+    }
+
   def escaped(l: Bytecode.Label, p: DataPort.Out): Boolean = ???
 
   def onlyValue(l: Bytecode.Label, p: DataPort): Option[Data.Known] = {
