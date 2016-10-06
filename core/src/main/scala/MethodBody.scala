@@ -13,7 +13,7 @@ import com.todesking.scalapp.syntax._
 case class MethodBody(
     descriptor: MethodDescriptor,
     attribute: MethodAttribute,
-    codeFragment: CodeFragment
+    codeFragment: CodeFragment.Complete
 ) {
   private[this] def require(cond: Boolean, detail: => String = ""): Unit =
     MethodBody.require(this, cond, detail)
@@ -53,16 +53,13 @@ case class MethodBody(
     }
   }
 
-  def rewrite_*(f: PartialFunction[(Bytecode.Label, Bytecode), CodeFragment]): MethodBody = {
-    rewrite_** {
-      case x @ (label, bc) if f.isDefinedAt(x) => Map(label -> f(x))
-    }
-  }
+  def rewrite_*(f: PartialFunction[(Bytecode.Label, Bytecode), CodeFragment]): MethodBody =
+    copy(codeFragment = codeFragment.rewrite_*(f).complete())
 
   def rewrite_**(
     f: PartialFunction[(Bytecode.Label, Bytecode), Map[Bytecode.Label, CodeFragment]]
   ): MethodBody =
-    copy(codeFragment = codeFragment.rewrite_**(f))
+    copy(codeFragment = codeFragment.rewrite_**(f).complete())
 
   def rewriteClassRef(from: ClassRef, to: ClassRef): MethodBody = {
     rewrite { case (label, bc: Bytecode.HasClassRef) if bc.classRef == from => bc.rewriteClassRef(to) }

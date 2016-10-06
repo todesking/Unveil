@@ -486,7 +486,7 @@ object Javassist {
       Some(MethodBody(
         mRef.descriptor,
         MethodAttribute.from(ctMethod.getModifiers),
-        new CodeFragment(bcs.toSeq, jumpTargets)
+        new CodeFragment.Complete(bcs.toSeq, jumpTargets)
       ))
     }
   }

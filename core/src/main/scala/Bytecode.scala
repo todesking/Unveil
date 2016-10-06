@@ -32,9 +32,7 @@ object Bytecode {
     override def toString = s"L$index"
   }
 
-  // TODO[refactor]: rename load, store, etc to autoXxx
-
-  def load(t: TypeRef, n: Int): Bytecode =
+  def autoLoad(t: TypeRef, n: Int): Bytecode =
     t match {
       case TypeRef.Int => iload(n)
       case TypeRef.Double => dload(n)
@@ -45,7 +43,7 @@ object Bytecode {
         throw new IllegalArgumentException(s"Unsupported load instruction for ${unk}")
     }
 
-  def store(t: TypeRef, n: Int): Bytecode =
+  def autoStore(t: TypeRef, n: Int): Bytecode =
     t match {
       case TypeRef.Int => istore(n)
       case TypeRef.Double => dstore(n)
@@ -165,7 +163,7 @@ object Bytecode {
 
   sealed abstract class ConstX extends Procedure {
     def out: DataPort.Out
-    def data: Data
+    def data: Data.Concrete
     override def inputs = Seq.empty
     override def output = Some(out)
   }
@@ -173,13 +171,13 @@ object Bytecode {
   sealed abstract class Const1 extends ConstX {
     final val out: DataPort.Out = DataPort.Out("const(1word)")
     override def nextFrame(l: Bytecode.Label, f: Frame) =
-      update(l, f).push1(output, FrameItem(DataSource.Bytecode(l, out), data))
+      update(l, f).push1(output, FrameItem(DataSource.Constant(l, out, data), data))
   }
 
   sealed abstract class Const2 extends ConstX {
     final val out: DataPort.Out = DataPort.Out("const(2word)")
     override def nextFrame(l: Bytecode.Label, f: Frame) =
-      update(l, f).push2(output, FrameItem(DataSource.Bytecode(l, out), data))
+      update(l, f).push2(output, FrameItem(DataSource.Constant(l, out, data), data))
   }
 
   sealed abstract class InvokeMethod extends Procedure with HasClassRef with HasMethodRef {
@@ -200,7 +198,7 @@ object Bytecode {
             else u.pop1(a)
         }
       ret.fold(popped) { rlabel =>
-        popped.push(Some(rlabel), FrameItem(DataSource.Bytecode(l, rlabel), Data.Unknown(methodRef.ret)))
+        popped.push(Some(rlabel), FrameItem(DataSource.MethodInvocation(l, rlabel), Data.Unknown(methodRef.ret)))
       }
     }
   }
@@ -217,7 +215,7 @@ object Bytecode {
             else u.pop1(a)
         }.pop1(objectref)
       ret.fold(popped) { rlabel =>
-        popped.push(Some(rlabel), FrameItem(DataSource.Bytecode(l, rlabel), Data.Unknown(methodRef.ret)))
+        popped.push(Some(rlabel), FrameItem(DataSource.MethodInvocation(l, rlabel), Data.Unknown(methodRef.ret)))
       }
     }
     def resolveMethod(instance: Instance[_ <: AnyRef]): ClassRef = ???
@@ -333,7 +331,7 @@ object Bytecode {
     override type Self = ldc2_double
     override def data = Data.ConcretePrimitive(TypeRef.Double, value)
   }
-  case class goto(override val jumpTarget: JumpTarget) extends Jump {
+  case class goto(override val jumpTarget: JumpTarget = JumpTarget("jump")) extends Jump {
     override type Self = goto
   }
   case class if_icmple(override val jumpTarget: JumpTarget) extends if_X1cmpXX {
@@ -372,7 +370,7 @@ object Bytecode {
             .push(
               Some(result),
               FrameItem(
-                DataSource.Bytecode(l, result),
+                DataSource.Generic(l, result),
                 d1.data.value.flatMap { v1 =>
                   d2.data.value.map { v2 =>
                     Data.ConcretePrimitive(
@@ -403,7 +401,7 @@ object Bytecode {
         .push(
           Some(result),
           FrameItem(
-            DataSource.Bytecode(l, result),
+            DataSource.Generic(l, result),
             f.stackTop.data.value.map { v =>
               Data.ConcretePrimitive(resultType, op(v.asInstanceOf[A]))
             }.getOrElse { Data.Unknown(resultType) }
@@ -497,7 +495,7 @@ object Bytecode {
           case _ =>
             Data.Unknown(fieldRef.descriptor.typeRef)
         }
-      update(l, f).pop1(objectref).push(output, FrameItem(DataSource.Field(classRef, fieldRef), data))
+      update(l, f).pop1(objectref).push(output, FrameItem(DataSource.InstanceField(l, out, self, classRef, fieldRef), data))
     }
   }
   case class getstatic(override val classRef: ClassRef, override val fieldRef: FieldRef) extends StaticFieldAccess with FieldGetter {
@@ -510,7 +508,7 @@ object Bytecode {
     override def pretty = s"getstatic ${fieldRef}"
     override def nextFrame(l: Bytecode.Label, f: Frame) = {
       val data = Data.Unknown(fieldRef.descriptor.typeRef) // TODO: set static field value if it is final
-      update(l, f).push(output, FrameItem(DataSource.Field(classRef, fieldRef), data))
+      update(l, f).push(output, FrameItem(DataSource.StaticField(l, out, classRef, fieldRef), data))
     }
   }
   case class putfield(override val classRef: ClassRef, override val fieldRef: FieldRef) extends InstanceFieldAccess with FieldSetter {
@@ -538,6 +536,6 @@ object Bytecode {
     override def inputs = Seq()
     override def output = Some(objectref)
     override def nextFrame(l: Bytecode.Label, f: Frame) =
-      update(l, f).push(output, FrameItem(DataSource.Bytecode(l, objectref), Data.Uninitialized(TypeRef.Reference(classRef))))
+      update(l, f).push(output, FrameItem(DataSource.New(l, objectref), Data.Uninitialized(TypeRef.Reference(classRef))))
   }
 }

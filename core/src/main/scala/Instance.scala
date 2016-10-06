@@ -68,8 +68,6 @@ sealed abstract class Instance[A <: AnyRef] {
   }
 
   def pretty: String
-
-  def methodSSA(cr: ClassRef, mr: MethodRef): DataFlow.SSA = ???
 }
 object Instance {
   def of[A <: AnyRef](value: A): Original[A] = Original(value)
@@ -208,8 +206,8 @@ object Instance {
   }
 
   class New[A <: AnyRef](override val klass: Klass.Native, constructor: MethodDescriptor) extends Abstract[A] with Equality.Reference {
-    def constructorSSA: DataFlow.SSA =
-      dataflow(klass.ref, MethodRef.constructor(constructor)).toSSA
+    def constructorDataFlow: DataFlow =
+      dataflow(klass.ref, MethodRef.constructor(constructor))
 
     override lazy val fieldValues =
       klass.instanceFieldAttributes.map { case (k @ (cr, fr), a) => k -> Data.Unknown(fr.typeRef) }

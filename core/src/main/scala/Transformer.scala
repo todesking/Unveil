@@ -130,12 +130,15 @@ object Transformer {
                         import Bytecode._
                         val leaked =
                           df.body.bytecode
-                            .filter { case (label, bc) => bc.inputs.exists { i => df.dataSource(label, i) == DataSource.Field(fcr, fr) } }
-                            .forall {
+                            .exists {
+                              case (label, bc: Bytecode.Shuffle) => false
+                              case (label, bc: Bytecode.Control) => false
                               case (label, bc @ getfield(_, _)) => false
-                              case (label, bc: InvokeInstanceMethod) =>
-                                bc.args.exists { arg => df.dataSource(label, arg) == DataSource.Field(fcr, fr) }
-                              case (label, bc) => true
+                              case (label, bc @ putfield(_, _)) =>
+                                df.dataSource(label, bc.value).mayFieldAccess(fcr, fr)
+                              case (label, bc: InvokeMethod) =>
+                                bc.args.exists { arg => df.dataSource(label, arg).mayFieldAccess(fcr, fr) }
+                              case _ => false
                             }
                         if (leaked) {
                           el.log(s"[SKIP] the field is leaked in method $mr")
@@ -219,28 +222,33 @@ object Transformer {
                 case (_, bc: LocalAccess) =>
                   CodeFragment.bytecode(bc.rewriteLocalIndex(bc.localIndex + localOffset))
                 case (label, bc: XReturn) =>
+                  // TODO: [BUG] goto tail
                   val resultLocal = localOffset + calleeDf.maxLocals
-                  new CodeFragment(
-                    Seq(store(bc.returnType, resultLocal)) ++ (
+                  CodeFragment.bytecode(
+                    Seq(autoStore(bc.returnType, resultLocal)) ++ (
                       calleeDf.beforeFrames(label).stack.drop(bc.returnType.wordSize).map {
                         case FrameItem(src, d) =>
                           autoPop(d.typeRef)
                       }
                     ) ++ Seq(
-                        load(bc.returnType, resultLocal)
-                      )
+                      autoLoad(bc.returnType, resultLocal)
+                    )
+                    : _*
                   )
                 case (label, bc: VoidReturn) =>
-                  new CodeFragment(
+                  CodeFragment.bytecode(
                     calleeDf.beforeFrames(label).stack.map {
                       case FrameItem(src, d) =>
                         autoPop(d.typeRef)
-                    }
+                    }: _*
                   )
               }.codeFragment
-                .prependBytecode(
-                  mr.descriptor.args.reverse.zipWithIndex.map { case (t, i) => store(t, i + argOffset) } ++
-                    (if (calleeDf.body.isStatic) Seq.empty else Seq(astore(localOffset)))
+                .prepend(
+                  CodeFragment.bytecode(
+                    mr.descriptor.args.reverse.zipWithIndex.map { case (t, i) => autoStore(t, i + argOffset) } ++
+                      (if (calleeDf.body.isStatic) Seq.empty else Seq(astore(localOffset)))
+                      : _*
+                  )
                 )
             localOffset += calleeDf.maxLocals + 1 // TODO: inefficient if static method
             cf
@@ -267,53 +275,92 @@ object Transformer {
     }
 
     private[this] def inline(df: DataFlow, el: EventLogger): MethodBody = {
-      val ssa = df.toSSA
-      import DataFlow.SSA.{ Instruction => I, ValueLabel }
-      import DataFlow.SSA
       import Bytecode._
-      // TODO: check all method is inlinable
-      val nonEscapes: Map[ValueLabel, (Instance.New[AnyRef], Map[(ClassRef, FieldRef), ValueLabel])] =
-        // TODO: check used method only in d.escaped
-        ssa.newInstances
-          .filter { case (v, d) => !ssa.escaped(v) && !d.escaped }
-          .map {
+      // TODO: check all required method is inlinable
+      val inlinables: Map[(Bytecode.Label, DataPort.Out), (Instance.New[_ <: AnyRef], Map[(ClassRef, FieldRef), Int])] =
+        // TODO: check used method only in ni.escaped
+        df.newInstances
+          .filter { case ((l, p), ni) => !df.escaped(l, p) && !ni.escaped }
+          .filter { case ((l, p), ni) =>
+            df.useSites(l, p).forall { case (ul, ubc, ups) =>
+              ups.forall { up => df.dataSource(ul, up).unambiguous }
+            }
+          }.map {
             case (v, d) =>
-              v -> (d -> d.klass.instanceFieldAttributes.keys.map { f => f -> ValueLabel.fresh() }.toMap)
-          }
+              v -> (d -> d.klass.instanceFieldAttributes.keys.zipWithIndex.toMap)
+          }.toMap
       def toInlineForm(
-        base: SSA,
-        fieldMap: Map[(ClassRef, FieldRef), ValueLabel],
+        base: DataFlow,
+        fieldMap: Map[(ClassRef, FieldRef), Int],
         inlined: Set[(ClassRef, MethodRef)] = Set()
-      ): SSA =
-        base
-          .rewrite {
-            case (l, I.Procedure(Some(out), Seq(objectref), getfield(cr, fr))) if base.mustThis(objectref) =>
-              SSA.bind(out, fieldMap((cr -> fr)))
-            case (l, I.Procedure(None, Seq(objectref, value), putfield(cr, fr))) if base.mustThis(objectref) =>
-              SSA.bind(fieldMap((cr -> fr)), value)
-            case (l, I.Procedure(out, Seq(objectref, args @ _*), bc: InvokeInstanceMethod)) if base.mustThis(objectref) =>
-              val cr = bc.resolveMethod(???)
+      ): CodeFragment = {
+        val retValIndex = df.maxLocals
+        val fieldLocalOffset = if(df.body.isStatic) retValIndex else retValIndex + 1
+        val localOffset = fieldLocalOffset + fieldMap.size
+        val prepareArgs = CodeFragment.bytecode(
+          base.body.descriptor.args.reverse.zipWithIndex.map { case (t, i) =>
+            autoStore(t, i + localOffset)
+          }: _*
+        )
+        val inlinableBody = base.body.codeFragment
+          .rewrite_* {
+            case (l,  bc @ getfield(cr, fr)) if base.mustThis(l, bc.objectref) =>
+              val index = fieldLocalOffset + fieldMap(base.instance.resolveField(cr, fr) -> fr)
+              CodeFragment.bytecode(
+                autoLoad(fr.typeRef, index)
+              )
+            case (l, bc @ putfield(cr, fr)) if base.mustThis(l, bc.objectref) =>
+              val index = fieldLocalOffset + fieldMap(base.instance.resolveField(cr, fr) -> fr)
+              CodeFragment.bytecode(
+                autoStore(fr.typeRef, index)
+              )
+            case (_, bc: LocalAccess) =>
+              CodeFragment.bytecode(bc.rewriteLocalIndex(bc.localIndex + localOffset))
+            case (l, bc: InvokeInstanceMethod) if base.mustThis(l, bc.objectref) =>
+              val cr = bc.resolveMethod(base.instance)
               if (inlined.contains(cr -> bc.methodRef))
                 throw new RuntimeException("recursive method not supported")
-              toInlineForm(base.instance.methodSSA(cr, bc.methodRef), fieldMap, inlined + (cr -> bc.methodRef))
-                .bindArgs(args)
+              val body = toInlineForm(
+                base.instance.dataflow(cr, bc.methodRef),
+                fieldMap,
+                inlined + (cr -> bc.methodRef)
+              )
+              ???
+            case (l, bc: XReturn) =>
+              val saveRetVal =
+                CodeFragment.bytecode(autoStore(df.body.descriptor.ret, retValIndex))
+              // pop stack
+              val gotoExit =
+                CodeFragment.abstractJump(goto(), "exit")
+              ???
           }
-      ssa.rewrite {
-        case (l, I.Procedure(Some(out), Seq(), bc @ new_(cr))) if nonEscapes.contains(out) =>
+        val exit =
+          (if(df.body.isStatic) {
+            CodeFragment.empty
+          } else {
+            CodeFragment.bytecode(autoLoad(df.body.descriptor.ret, retValIndex))
+          }).name("exit")
+        (prepareArgs + inlinableBody + exit).complete()
+      }
+
+      def inlinable(l: Bytecode.Label, p: DataPort): Option[(Instance.New[_ <: AnyRef], Map[(ClassRef, FieldRef), Int])] =
+        df.dataSource(l, p).single.collect { case DataSource.New(l, p) => inlinables.get(l -> p) }.flatten
+
+      df.body.rewrite_* {
+        case (l, bc @ new_(cr)) if inlinables.contains(l -> bc.objectref) =>
           // inline ctor
-          val (newInstance, fieldMap) = nonEscapes(out)
-          toInlineForm(newInstance.constructorSSA, fieldMap)
-        case (l, I.Procedure(outOpt, Seq(objectref, args @ _*), bc: InvokeInstanceMethod)) if nonEscapes.contains(objectref) =>
-          // inline method
-          val (newInstance, fieldMap) = nonEscapes(objectref)
-          toInlineForm(newInstance.methodSSA(bc.resolveMethod(???), bc.methodRef), fieldMap)
-        case (l, I.Procedure(Some(out), Seq(objectref), getfield(cr, fr))) if nonEscapes.contains(objectref) =>
-          val (newInstance, fieldMap) = nonEscapes(objectref)
-          SSA.bind(out, fieldMap(cr -> fr))
-        case (l, I.Procedure(None, Seq(objectref, value), putfield(cr, fr))) if nonEscapes.contains(objectref) =>
-          val (newInstance, fieldMap) = nonEscapes(objectref)
-          SSA.bind(fieldMap(cr -> fr), value)
-      }.methodBody
+          val (newInstance, fieldMap) = inlinables(l -> bc.objectref)
+          toInlineForm(newInstance.constructorDataFlow, fieldMap)
+        case (l, bc: InvokeInstanceMethod) if inlinable(l, bc.objectref).nonEmpty =>
+          val Some((newInstance, fieldMap)) = inlinable(l, bc.objectref)
+          toInlineForm(newInstance.dataflow(bc.resolveMethod(newInstance), bc.methodRef), fieldMap)
+        case (l, bc @ getfield(cr, fr)) if inlinable(l, bc.objectref).nonEmpty =>
+          val Some((newInstance, fieldMap)) = inlinable(l, bc.objectref)
+          CodeFragment.bytecode(pop(), autoLoad(fr.typeRef, fieldMap(cr -> fr)))
+        case (l, bc @ putfield(cr, fr)) if inlinable(l, bc.objectref).nonEmpty =>
+          val Some((newInstance, fieldMap)) = inlinable(l, bc.objectref)
+          CodeFragment.bytecode(autoStore(fr.typeRef, fieldMap(cr -> fr)), pop())
+      }
     }
   }
 

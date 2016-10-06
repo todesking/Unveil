@@ -43,29 +43,30 @@ class ClassCompiler(klass: Klass.Modified, fieldValues: Map[(ClassRef, FieldRef)
     MethodBody(
       descriptor = constructorDescriptor,
       MethodAttribute.Public,
-      codeFragment = new CodeFragment(
-      Seq(
-        Seq(aload(0)),
-        superConstructor.descriptor.args.zipWithIndex.map {
-          case (t, i) =>
-            load(t, i + thisFieldAssigns.size + 1)
-        },
+      codeFragment = CodeFragment.bytecode(
         Seq(
-          invokespecial(
-            ClassRef.of(superClass),
-            superConstructor.methodRef
-          )
-        )
-      ).flatten ++ thisFieldAssigns.flatMap {
-          case (fr, i) =>
-            import Bytecode._
-            Seq(
-              aload(0),
-              load(fr.descriptor.typeRef, i),
-              putfield(klass.ref, fr)
+          Seq(aload(0)),
+          superConstructor.descriptor.args.zipWithIndex.map {
+            case (t, i) =>
+              autoLoad(t, i + thisFieldAssigns.size + 1)
+          },
+          Seq(
+            invokespecial(
+              ClassRef.of(superClass),
+              superConstructor.methodRef
             )
-        }.toSeq ++ Seq(vreturn())
-    )
+          )
+        ).flatten ++ thisFieldAssigns.flatMap {
+            case (fr, i) =>
+              import Bytecode._
+              Seq(
+                aload(0),
+                autoLoad(fr.descriptor.typeRef, i),
+                putfield(klass.ref, fr)
+              )
+          }.toSeq ++ Seq(vreturn())
+          : _*
+        )
     )
   }
 

@@ -2,7 +2,7 @@ package com.todesking.unveil
 
 case class FieldRef(name: String, descriptor: FieldDescriptor) {
   override def toString: String = s"${name}: ${descriptor}"
-  def typeRef: TypeRef = descriptor.typeRef
+  def typeRef: TypeRef.Public = descriptor.typeRef
   def renamed(newName: String): FieldRef = copy(name = newName)
   def anotherUniqueName(baseNames: String*): FieldRef =
     if (baseNames.isEmpty) anotherUniqueName(name)

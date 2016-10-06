@@ -14,24 +14,25 @@ class DataFlow(val body: MethodBody, val instance: Instance[_ <: AnyRef]) {
   def possibleValues(l: Bytecode.Label, p: DataPort): Seq[Data] =
     Seq(dataValues(l -> p))
 
+  lazy val newInstances: Map[(Bytecode.Label, DataPort.Out), Instance.New[_ <: AnyRef]] = ???
+  def escaped(l: Bytecode.Label, p: DataPort.Out): Boolean = ???
+
   def onlyValue(l: Bytecode.Label, p: DataPort): Option[Data.Known] = {
     val pvs = possibleValues(l, p)
     if (pvs.size == 1) Some(pvs.head).collect { case d: Data.Known => d }
     else None
   }
 
-  def toSSA: DataFlow.SSA =
-    DataFlow.SSA.parse(this)
-
   def dataSource(l: Bytecode.Label, p: DataPort): DataSource =
     dataSources(l -> p)
 
+  // TODO: [BUG] track merge
   private[this] lazy val useSitesMap: Map[(Bytecode.Label, DataPort.Out), Map[Bytecode.Label, Set[DataPort.In]]] =
     body.bytecode.flatMap {
       case (l, bc) =>
         bc.inputs
           .map { p => p -> dataSource(l, p) }
-          .collect { case (p1, DataSource.Bytecode(l2, p2)) => (l2, p2) -> (l, p1) }
+          .collect { case (p1, DataSource.HasLocation(l2, p2)) => (l2, p2) -> (l, p1) }
     }.groupBy(_._1).mapValues(_.map(_._2)).map {
       case (k, uses) => k -> uses.groupBy(_._1).mapValues(_.map(_._2).toSet)
     }.toMap
@@ -280,44 +281,3 @@ class DataFlow(val body: MethodBody, val instance: Instance[_ <: AnyRef]) {
   }
 }
 
-object DataFlow {
-  sealed abstract trait Rewrite
-  class SSA(
-      instructions: Seq[SSA.Instruction],
-      jumps: Map[(SSA.Label, JumpTarget), SSA.Label]
-  ) {
-    import SSA._
-
-    def newInstances: Map[ValueLabel, Instance.New[AnyRef]] = ???
-    def useSites(v: ValueLabel): Map[Label, Instruction] = ???
-    def rewrite(f: PartialFunction[(Label, Instruction), SSA]): SSA = ???
-    def mustThis(v: ValueLabel): Boolean = ??? // throw if undecidable
-    def escaped(v: ValueLabel): Boolean = ???
-    def instance: Instance[_ <: AnyRef] = ???
-    def bindArgs(args: Seq[ValueLabel]): SSA = ???
-    def methodBody: MethodBody = ???
-  }
-  object SSA {
-    def parse(df: DataFlow): SSA = ???
-    case class ValueLabel private (globalUniqueId: Long)
-    object ValueLabel {
-      private[this] var _currentId: Long = 0L
-      def fresh(): ValueLabel = synchronized {
-        _currentId += 1
-        ValueLabel(_currentId)
-      }
-    }
-    case class Label(index: Int)
-
-    sealed abstract class Instruction
-    object Instruction {
-      case class Phy(out: ValueLabel, ins: Seq[ValueLabel]) extends Instruction
-      case class Procedure(out: Option[ValueLabel], ins: Seq[ValueLabel], bytecode: Bytecode.Procedure) extends Instruction
-      case class Return(in: Option[ValueLabel]) extends Instruction
-      case class Goto(jump: JumpTarget) extends Instruction
-      case class Branch(jump: JumpTarget, in: ValueLabel, bytecode: Bytecode.Branch) extends Instruction
-    }
-    def bind(out: ValueLabel, value: ValueLabel): SSA =
-      new SSA(Seq(Instruction.Phy(out, Seq(value))), Map())
-  }
-}

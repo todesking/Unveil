@@ -3,7 +3,6 @@ package com.todesking.unveil
 object Pretty {
   def format_MethodBody(mb: MethodBody): String = ???
   def format_DataFlow(df: DataFlow): String = ???
-  def format_DataFlow_SSA(ssa: DataFlow.SSA) = ???
 
   def format_Instance_Original[A <: AnyRef](o: Instance.Original[A]): String = ???
   def format_Instance_Duplicate[A <: AnyRef](dup: Instance.Duplicate[A]): String = ???
@@ -49,6 +48,23 @@ ${
     }
 }"""
   }
+
+  def format_CodeFragment_Complete(cf: CodeFragment.Complete): String = {
+    s"""${
+      cf.bytecode.map {
+        case (l, bc) =>
+          val format = "L%03d"
+          l.format(format) + " " + (bc match {
+            case bc: Bytecode.HasAJumpTarget =>
+              s"${bc.pretty} # ${cf.jumpDestination(l, bc.jumpTarget).format(format)}"
+            case bc =>
+              bc.pretty
+          })
+      }.mkString("\n")
+    }
+"""
+  }
+
 
   // TODO: super class information
   private[this] def format_Klass0(
