@@ -19,6 +19,8 @@ case class MethodBody(
   private[this] def require(cond: Boolean, detail: => String = ""): Unit =
     MethodBody.require(this, cond, detail)
 
+  require(codeFragment.nonEmpty)
+
   def bytecodeFromLabel(l: Bytecode.Label): Bytecode =
     codeFragment.bytecodeFromLabel(l)
 

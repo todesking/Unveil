@@ -391,6 +391,7 @@ class Spec extends FunSpec with Matchers {
           def foo(): Int = new A(2).value + value
         }
         val i = Instance.of(new A(1))
+        println(i.duplicate1(el).pretty)
         val ri = Transformer.localInstanceInlining(i, el).get
         withThe(ri) {
           ri.materialize(el).value.foo() should be(3)

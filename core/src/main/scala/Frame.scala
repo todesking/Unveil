@@ -1,6 +1,12 @@
 package com.todesking.unveil
 
 case class Frame(locals: Map[Int, FrameItem], stack: List[FrameItem]) {
+  def replaceDataBySource(src: DataSource.Single, to: Data): Frame =
+    Frame(
+      locals.mapValues(_.replaceDataBySource(src, to)),
+      stack.map(_.replaceDataBySource(src, to))
+    )
+
   def local(n: Int): FrameItem =
     locals(n)
 

@@ -14,6 +14,9 @@ sealed abstract class DataSource {
       case Some(false) => false
       case None => throw new RuntimeException("ambigious")
     }
+  def mayProducedBy(l: Bytecode.Label, p: DataPort.Out): Boolean =
+    producedBy(l, p) != Some(false)
+  def producedBy(l: Bytecode.Label, p: DataPort.Out): Option[Boolean]
   def unambiguous: Boolean
   def mayFieldAccess(cr: ClassRef, fr: FieldRef): Boolean
   def single: Option[DataSource.Single]
@@ -36,6 +39,12 @@ object DataSource {
     override def mayFieldAccess(cr: ClassRef, fr: FieldRef) =
       sources.exists(_.mayFieldAccess(cr, fr))
     override def single = if(sources.size == 1) Some(sources.head) else None
+    override def producedBy(l: Bytecode.Label, p: DataPort.Out): Option[Boolean] = {
+      val parts = sources.map(_.producedBy(l, p))
+      if(parts.forall(_ == Some(true)))  Some(true)
+      else if(parts.forall(_ == Some(false))) Some(false)
+      else None
+    }
   }
 
   sealed abstract class Single extends DataSource {
@@ -48,11 +57,13 @@ object DataSource {
     override def unambiguous = true
     override def mayFieldAccess(cr: ClassRef, fr: FieldRef) = false
     override def single = Some(this)
+    override def producedBy(l: Bytecode.Label, p: DataPort.Out): Option[Boolean] = Some(false)
   }
 
   sealed trait HasLocation extends Single {
     def label: Bytecode.Label
     def port: DataPort.Out
+    final override def producedBy(l: Bytecode.Label, p: DataPort.Out): Option[Boolean] = Some(l == label && p == port)
   }
   object HasLocation {
     def unapply(s: DataSource): Option[(Bytecode.Label, DataPort.Out)] = s match {

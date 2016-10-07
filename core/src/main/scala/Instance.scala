@@ -14,8 +14,16 @@ import Syntax.Upcast
 
 sealed abstract class Instance[A <: AnyRef] {
   def klass: Klass
-  def escaped: Boolean = ???
+  def escaped: Boolean =
+    accessibleMethods
+      .filter { case (cr, mr) => cr < ClassRef.Object }
+      .exists { case (cr, mr) =>
+        dataflow(cr, mr).escaped(DataSource.This)
+      }
   def toData: Data = Data.reference(this)
+
+  def accessibleMethods: Set[(ClassRef, MethodRef)] =
+    methods.filterNot(_._2.isPrivate).keySet
 
   // TODO: rename virtualMethodBody
   final def methodBody(ref: MethodRef): MethodBody =
@@ -213,6 +221,7 @@ object Instance {
       klass.instanceFieldAttributes.map { case (k @ (cr, fr), a) => k -> Data.Unknown(fr.typeRef) }
 
     override def pretty: String = s"new ${klass.ref}(${constructor.argsStr})"
+    override def toString = pretty
     override def thisRef = klass.ref
   }
 

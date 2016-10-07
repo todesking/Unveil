@@ -218,7 +218,7 @@ object Bytecode {
         popped.push(Some(rlabel), FrameItem(DataSource.MethodInvocation(l, rlabel), Data.Unknown(methodRef.ret)))
       }
     }
-    def resolveMethod(instance: Instance[_ <: AnyRef]): ClassRef = ???
+    def resolveMethod(instance: Instance[_ <: AnyRef]): ClassRef
   }
 
   sealed abstract class FieldAccess extends Procedure with HasClassRef with HasFieldRef {
@@ -456,12 +456,16 @@ object Bytecode {
     override def withNewClassRef(newRef: ClassRef) = copy(classRef = newRef)
     override def withNewMehtodRef(newRef: MethodRef) = copy(methodRef = newRef)
     override def pretty = s"invokevirtual ${classRef.pretty}.${methodRef.str}"
+    override def resolveMethod(instance: Instance[_ <: AnyRef]): ClassRef =
+      instance.resolveVirtualMethod(methodRef)
   }
   case class invokeinterface(override val classRef: ClassRef, override val methodRef: MethodRef, count: Int) extends InvokeInstanceMethod {
     override type Self = invokeinterface
     override def withNewClassRef(newRef: ClassRef) = copy(classRef = newRef)
     override def withNewMehtodRef(newRef: MethodRef) = copy(methodRef = newRef)
     override def pretty = s"invokeinterface ${classRef.pretty}.${methodRef.str}"
+    override def resolveMethod(instance: Instance[_ <: AnyRef]): ClassRef =
+      instance.resolveVirtualMethod(methodRef)
   }
   case class invokespecial(override val classRef: ClassRef, override val methodRef: MethodRef) extends InvokeInstanceMethod {
     override type Self = invokespecial
@@ -471,7 +475,7 @@ object Bytecode {
     override def nextFrame(l: Bytecode.Label, f: Frame) = {
       require(f.stack.size >= methodRef.args.size + 1)
       f.stack(methodRef.args.size) match {
-        case FrameItem(ds @ DataSource.New(sl, sp), Data.Uninitialized(t)) =>
+        case FrameItem(ds @ DataSource.New(sl, sp), uninitialized @ Data.Uninitialized(t)) =>
           // should ctor
           if(!methodRef.isInit) {
             throw new IllegalArgumentException(s"expect ctor call but ${methodRef}")
@@ -483,24 +487,22 @@ object Bytecode {
             throw new IllegalArgumentException(s"Unexpected abstract ClassRef: ${classRef}")
           }
           assert(methodRef.ret == TypeRef.Void)
-          val popped =
-            args.zip(methodRef.args).foldRight(update(l, f)) {
+
+          val initialized =
+            Data.AbstractReference(
+              new Instance.New[AnyRef](
+                classRef.asInstanceOf[ClassRef.Concrete].loadKlass, // TODO: make safer
+                methodRef.descriptor
+              )
+            )
+
+          args.zip(methodRef.args)
+            .foldRight(update(l, f)) {
               case ((a, t), u) =>
                 if (t.isDoubleWord) u.pop2(a)
                 else u.pop1(a)
             }.pop1(objectref)
-          popped.copy(
-            frameItems =
-              popped.frameItems + ((sl, sp) -> FrameItem(
-                ds,
-                Data.AbstractReference(
-                  new Instance.New[AnyRef](
-                    classRef.asInstanceOf[ClassRef.Concrete].loadKlass,
-                    methodRef.descriptor
-                  )
-                )
-              ))
-          )
+            .initializeInstance(sl, sp, initialized)
         case FrameItem(src, Data.Uninitialized(t)) if src.must(DataSource.This) =>
           // super ctor call in ctor
           super.nextFrame(l, f)
@@ -514,6 +516,8 @@ object Bytecode {
           super.nextFrame(l, f)
       }
     }
+    override def resolveMethod(instance: Instance[_ <: AnyRef]): ClassRef =
+      classRef // TODO: [BUG]
   }
   case class invokestatic(override val classRef: ClassRef, override val methodRef: MethodRef) extends InvokeClassMethod {
     override type Self = invokestatic

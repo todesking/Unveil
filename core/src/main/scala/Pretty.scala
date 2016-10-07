@@ -13,7 +13,7 @@ object Pretty {
     case k: Klass.Modified => format_Klass_Modified(k)
     case k => k.toString
   }
-  def format_Klass_MaterializedNative(klass: Klass.MaterializedNative): String = ???
+  def format_Klass_MaterializedNative(klass: Klass.MaterializedNative): String = klass.toString
   def format_Klass_Modified(klass: Klass.Modified): String = {
     s"""class ${klass.ref} {
   // new/overriden methods:

@@ -1,6 +1,6 @@
 scalaVersion := "2.11.7"
 
-scalacOptions ++= Seq("-feature", "-deprecation", "-Xfatal-warnings ")
+scalacOptions ++= Seq("-feature", "-deprecation", "-Xfatal-warnings")
 
 scalariformSettings
 

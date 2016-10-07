@@ -13,6 +13,8 @@ sealed abstract class MethodAttribute extends Flags[MethodAttribute] {
     this.has(MethodAttribute.Abstract)
   def isNative: Boolean =
     this.has(MethodAttribute.Native)
+  def isPrivate: Boolean =
+    this.has(MethodAttribute.Private)
   def makePrivate: MethodAttribute
   def makeNonFinal: MethodAttribute
 }

@@ -5,6 +5,8 @@ abstract class CodeFragment {
 
   def size: Int
 
+  def nonEmpty: Boolean = size > 0
+
   def incompleteJumpTargets: Map[(Bytecode.Label, JumpTarget), Either[String, Bytecode.Label]]
 
   def nameToLabel: Map[String, Bytecode.Label]
@@ -58,7 +60,6 @@ object CodeFragment {
     jumpTargets: Map[(Bytecode.Label, JumpTarget), Bytecode.Label]
   ) extends CodeFragment {
     {
-      require(bytecodeSeq.nonEmpty)
       val jts = bytecode.collect {
         case (l, bc: Bytecode.HasJumpTargets) =>
           bc.jumpTargets.map(l -> _)
@@ -114,6 +115,7 @@ object CodeFragment {
         ) {
           case ((bcs, jts, n2l, offset), (label, cf)) =>
             val start = label.index + offset
+            require(cf.nonEmpty) // TODO: remove
             require(0 <= start && start < bcs.size)
             val newBcs = bcs.patch(start, cf.bytecodeSeq, 1)
             val shift = cf.bytecode.size - 1
@@ -126,7 +128,7 @@ object CodeFragment {
               } ++ cf.incompleteJumpTargets.map { case ((l, jt), dest) =>
                 (l.offset(start) -> jt) -> dest.fold(Left.apply, l => Right(l.offset(start)))
               }
-            val newN2L = Algorithm.sharedNothingUnion(n2l, cf.nameToLabel) getOrElse {
+            val newN2L = Algorithm.sharedNothingUnion(n2l, cf.nameToLabel.mapValues(_.offset(start))) getOrElse {
               throw new IllegalArgumentException(s"Name conflict: ${n2l.keys.filter(cf.nameToLabel.keySet).mkString(", ")}")
             }
             (newBcs, newJts, newN2L, offset + shift)
@@ -191,15 +193,20 @@ object CodeFragment {
       )
     }
     override def complete(): Complete = {
-      ???
+      Partial(
+        bytecodeSeq,
+        incompleteJumpTargets,
+        nameToLabel
+      ).complete()
     }
     override def +(rhs: CodeFragment): Concat = rhs match {
       case Concat(rItems, an2l) =>
+        val offset = items.map(_.size).sum
         Concat(
           items ++ rItems,
           Algorithm.sharedNothingUnion(
             additionalNameToLabel,
-            an2l.mapValues { case l => l.offset(items.size) }
+            an2l.mapValues { case l => l.offset(offset) }
           ).getOrElse {
             throw new IllegalArgumentException(s"Name conflict: ${additionalNameToLabel.keys.filter(an2l.keySet)}")
           }

@@ -6,6 +6,7 @@ sealed abstract class TypeRef {
   def isAssignableFrom(rhs: TypeRef): Boolean =
     (this == rhs) || ((this, rhs) match {
       case (l: TypeRef.Reference, r: TypeRef.Reference) if l.classRef >= r.classRef => true
+      case (l: TypeRef.Reference, TypeRef.Null) => true
       case _ => false
     })
 }
@@ -79,7 +80,10 @@ object TypeRef {
   case object Float extends Primitive("float", "F", java.lang.Float.TYPE, 0.0f) with SingleWord
   case object Long extends Primitive("long", "J", java.lang.Long.TYPE, 0L) with DoubleWord
   case object Double extends Primitive("double", "D", java.lang.Double.TYPE, 0.0) with DoubleWord
-  case object Void extends Primitive("void", "V", java.lang.Void.TYPE, null) with SingleWord
+  case object Void extends Primitive("void", "V", java.lang.Void.TYPE, null) {
+    override def isDoubleWord = false
+    override def wordSize = 0
+  }
 
   case class Reference(classRef: ClassRef) extends Public with SingleWord {
     override def str = s"L${classRef.binaryName};"

@@ -16,10 +16,40 @@ class DataFlow(val body: MethodBody, val instance: Instance[_ <: AnyRef]) {
 
   lazy val newInstances: Map[(Bytecode.Label, DataPort.Out), Instance.New[_ <: AnyRef]] =
     dataValues.collect {
-      case ((l, p), Data.AbstractReference(n: Instance.New[_])) => ((l -> p) -> n).asInstanceOf
-    }
+      case (k @ (l, p: DataPort.Out), Data.AbstractReference(n: Instance.New[_])) => (l -> p) -> n.asInstanceOf[Instance.New[_ <: AnyRef]]
+    }.toMap
 
-  def escaped(l: Bytecode.Label, p: DataPort.Out): Boolean = ???
+  // TODO: [BUG] check leakage in ctor
+  def escaped(label: Bytecode.Label, p: DataPort.Out): Boolean = {
+    import Bytecode._
+    body.bytecode.exists {
+      case (l, bc: InvokeMethod) =>
+        bc.args.exists { arg => dataSource(l, arg).mayProducedBy(label, p) }
+      case (l, bc: FieldSetter) =>
+        dataSource(l, bc.value).mayProducedBy(label, p)
+      case (l, bc: XReturn) =>
+        dataSource(l, bc.retval).mayProducedBy(label, p)
+      case (l, bc @ athrow()) =>
+        dataSource(l, bc.objectref).mayProducedBy(label, p)
+      case _ => false
+    }
+  }
+
+  // TODO: refactor
+  def escaped(ds: DataSource.Single): Boolean = {
+    import Bytecode._
+    body.bytecode.exists {
+      case (l, bc: InvokeMethod) =>
+        bc.args.exists { arg => dataSource(l, arg).may(ds) }
+      case (l, bc: FieldSetter) =>
+        dataSource(l, bc.value).may(ds)
+      case (l, bc: XReturn) =>
+        dataSource(l, bc.retval).may(ds)
+      case (l, bc @ athrow()) =>
+        dataSource(l, bc.objectref).may(ds)
+      case _ => false
+    }
+  }
 
   def onlyValue(l: Bytecode.Label, p: DataPort): Option[Data.Known] = {
     val pvs = possibleValues(l, p)
@@ -260,7 +290,8 @@ class DataFlow(val body: MethodBody, val instance: Instance[_ <: AnyRef]) {
     val allFrames = preFrames.values ++ updates.values.map(_.newFrame)
     val maxLocals = allFrames.flatMap(_.locals.keys).max + 1
     val maxStackDepth = allFrames.map(_.stack.size).max
-    val dataValues = updates.values.flatMap(_.dataValues).toMap
+    val dataValues: Map[(Bytecode.Label, DataPort), Data] =
+      updates.values.flatMap(_.dataValues).toMap ++ updates.values.flatMap(_.initializes)
     val dataSources = updates.values.flatMap(_.dataSources).toMap
 
     (dataValues, maxLocals, maxStackDepth, preFrames.toMap, dataSources)

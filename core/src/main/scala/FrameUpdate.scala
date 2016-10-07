@@ -16,13 +16,15 @@ case class FrameUpdate(
     label: Bytecode.Label,
     bytecode: Bytecode,
     newFrame: Frame,
-    frameItems: Map[(Bytecode.Label, DataPort), FrameItem]
+    frameItems: Map[(Bytecode.Label, DataPort), FrameItem],
+    initializes: Map[(Bytecode.Label, DataPort.Out), Data.AbstractReference]
 ) {
   def this(label: Bytecode.Label, bytecode: Bytecode, frame: Frame) =
     this(
       label,
       bytecode,
       frame,
+      Map.empty,
       Map.empty
     )
 
@@ -106,7 +108,8 @@ case class FrameUpdate(
       label,
       bytecode,
       newFrame.copy(stack = stack),
-      frameItems + ((label -> in) -> fi)
+      frameItems + ((label -> in) -> fi),
+      initializes
     )
 
   def push(p: Option[DataPort], d: FrameItem): FrameUpdate =
@@ -128,7 +131,8 @@ case class FrameUpdate(
       label,
       bytecode,
       newFrame.copy(stack = stack),
-      p.fold(frameItems) { p => frameItems + ((label -> p) -> fi) }
+      p.fold(frameItems) { p => frameItems + ((label -> p) -> fi) },
+      initializes
     )
 
   def setLocal(n: Int, data: FrameItem): FrameUpdate = {
@@ -141,7 +145,8 @@ case class FrameUpdate(
       label,
       bytecode,
       newFrame.copy(locals = newFrame.locals.updated(n, data)),
-      frameItems
+      frameItems,
+      initializes
     )
   }
 
@@ -184,7 +189,8 @@ case class FrameUpdate(
       label,
       bytecode,
       Frame(Map.empty, List.empty),
-      frameItems + ((label -> retval) -> fi)
+      frameItems + ((label -> retval) -> fi),
+      initializes
     )
   }
 
@@ -194,7 +200,20 @@ case class FrameUpdate(
       label,
       bytecode,
       newFrame.copy(stack = newFrame.stack.take(1)),
-      frameItems
+      frameItems,
+      initializes
     )
   }
+
+  def initializeInstance(
+    label: Bytecode.Label,
+    port: DataPort.Out,
+    data: Data.AbstractReference
+  ): FrameUpdate =
+    copy(
+      newFrame =
+        newFrame.replaceDataBySource(DataSource.New(label, port), data),
+      initializes =
+        initializes + ((label, port) -> data)
+    )
 }

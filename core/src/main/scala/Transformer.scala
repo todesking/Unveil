@@ -279,7 +279,7 @@ object Transformer {
 
       el.log("New instances:")
       df.newInstances.foreach { case ((l, p), i) =>
-        s"  - ${l},${p}: ${i}"
+        el.log(s"  - ${l},${p}: ${i}")
       }
 
       // TODO: check all required method is inlinable
@@ -298,21 +298,24 @@ object Transformer {
 
       el.log("Inlinable:")
       df.newInstances.foreach { case ((l, p), i) =>
-        s"  - ${l},${p}: ${i}"
+        el.log(s"  - ${l},${p}: ${i}")
       }
 
+      // TODO: [BUG] manage local offset for each inlinable instance
       def toInlineForm(
         base: DataFlow,
         fieldMap: Map[(ClassRef, FieldRef), Int],
         inlined: Set[(ClassRef, MethodRef)] = Set()
       ): CodeFragment = {
+        require(!base.body.isStatic)
         val retValIndex = df.maxLocals
-        val fieldLocalOffset = if(df.body.isStatic) retValIndex else retValIndex + 1
+        val fieldLocalOffset = retValIndex + 1
         val localOffset = fieldLocalOffset + fieldMap.size
+
         val prepareArgs = CodeFragment.bytecode(
-          base.body.descriptor.args.reverse.zipWithIndex.map { case (t, i) =>
-            autoStore(t, i + localOffset)
-          }: _*
+          base.body.descriptor.args.zipWithIndex.reverse.map { case (t, i) =>
+            autoStore(t, 1 + i + localOffset)
+          } :+ astore(localOffset): _*
         )
         val inlinableBody = base.body.codeFragment
           .rewrite_* {
@@ -332,25 +335,37 @@ object Transformer {
               val cr = bc.resolveMethod(base.instance)
               if (inlined.contains(cr -> bc.methodRef))
                 throw new RuntimeException("recursive method not supported")
-              val body = toInlineForm(
+              toInlineForm(
                 base.instance.dataflow(cr, bc.methodRef),
                 fieldMap,
                 inlined + (cr -> bc.methodRef)
               )
-              ???
-            case (l, bc: XReturn) =>
-              val saveRetVal =
-                CodeFragment.bytecode(autoStore(df.body.descriptor.ret, retValIndex))
-              // pop stack
+            case (l, bc: Return) =>
+              val cleanupStack =
+                CodeFragment.bytecode(
+                  base.beforeFrames(l).stack
+                    .drop(base.body.descriptor.ret.wordSize).map {
+                      case FrameItem(src, d) =>
+                        autoPop(d.typeRef)
+                    }
+                  : _*
+                )
               val gotoExit =
                 CodeFragment.abstractJump(goto(), "exit")
-              ???
+
+              if(base.body.descriptor.isVoid) {
+                cleanupStack + gotoExit
+              } else {
+                val saveRetVal =
+                  CodeFragment.bytecode(autoStore(base.body.descriptor.ret, retValIndex))
+                saveRetVal + cleanupStack + gotoExit
+              }
           }
         val exit =
-          (if(df.body.isStatic) {
+          (if(base.body.descriptor.isVoid) {
             CodeFragment.empty
           } else {
-            CodeFragment.bytecode(autoLoad(df.body.descriptor.ret, retValIndex))
+            CodeFragment.bytecode(autoLoad(base.body.descriptor.ret, retValIndex))
           }).name("exit")
         (prepareArgs + inlinableBody + exit).complete()
       }
@@ -360,9 +375,7 @@ object Transformer {
 
       df.body.rewrite_* {
         case (l, bc @ new_(cr)) if inlinables.contains(l -> bc.objectref) =>
-          // inline ctor
-          val (newInstance, fieldMap) = inlinables(l -> bc.objectref)
-          toInlineForm(newInstance.constructorDataFlow, fieldMap)
+          CodeFragment.bytecode(aconst_null()) // dummy value
         case (l, bc: InvokeInstanceMethod) if inlinable(l, bc.objectref).nonEmpty =>
           val Some((newInstance, fieldMap)) = inlinable(l, bc.objectref)
           toInlineForm(newInstance.dataflow(bc.resolveMethod(newInstance), bc.methodRef), fieldMap)
