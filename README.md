@@ -1,5 +1,7 @@
 # Unveil: Runtime JVM bytecode optimizer
 
+* [日本語の発表資料](http://techlog.mvrck.co.jp/entry/todesking-runtime-jvm-bytecode-optimization/)
+
 ## Motivation
 
 In spite of JVM has JIT compilation, theres remaining some performance overhead.
